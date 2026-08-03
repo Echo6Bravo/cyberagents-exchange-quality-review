@@ -25,4 +25,6 @@ Initial public release.
 - `setup.sh` — one-command install of the optional toolkit (`--check` reports without
   installing).
 - CI that runs the same gates the skill recommends: gitleaks (full history), actionlint, and a
-  SKILL.md structure check.
+  SKILL.md structure check. CI actions are **pinned to commit SHAs** (dimension 18) with
+  **Dependabot** wired to keep them current — practicing the skill's own no-moving-tags rule.
+- Project docs: `SECURITY.md`, `CONTRIBUTING.md`, and an illustrative `examples/sample-review.md`.
