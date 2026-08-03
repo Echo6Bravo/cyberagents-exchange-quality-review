@@ -70,9 +70,11 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    fails → flag the gap, don't lose everything); API retry/backoff on 429/5xx; determinism/
    reproducibility for audit.
 
-6. **Version portability.** Language/runtime floor (test on the real minimum, e.g. a
-   container); avoid tool flags newer than the documented floor (e.g. `curl --fail-with-body`
-   needs 7.76+). No unpinned/absent third-party deps assumed present.
+6. **Version portability & transport security.** Language/runtime floor (test on the real
+   minimum, e.g. a container); avoid tool flags newer than the documented floor (e.g.
+   `curl --fail-with-body` needs 7.76+). No unpinned/absent third-party deps assumed present.
+   **TLS must be verified** on all outbound traffic — never `CERT_NONE`/`verify=False`/
+   `-k`, especially on requests carrying a credential (a silent MITM/credential-exposure bug).
 
 7. **Schema/contract drift.** If the tool depends on an external schema (UDM/GraphQL/API), is
    there a canary that fails loud when a depended-on field is renamed/removed, rather than
@@ -84,6 +86,10 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    `gitleaks git --no-banner --redact .`; else `git log -p | grep -nE '(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|-----BEGIN [A-Z ]*PRIVATE KEY-----|_TOKEN=[A-Za-z0-9]{12,})'`.
    `.gitignore` blocks secrets + real data; only synthetic samples are committed. Any leak =
    rotate the credential AND purge it from history (BFG/filter-repo) before shipping.
+   **Also check credential storage AT REST:** a user-supplied API key/token must live in an OS
+   keystore / secret manager / vetted AEAD — never plaintext in a local DB or `config.json`,
+   never browser `localStorage`/`chrome.storage.local`, never a home-rolled XOR scheme, and
+   never passed on a command line (leaks to `ps`/shell history).
 
 9. **Malicious / offensive behavior (self-check — is the artifact itself safe?).** Confirm the
    tool is defensive, not weaponized: it does not exploit/move-laterally/exfiltrate, does not
@@ -107,6 +113,47 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     any fidelity/coverage caveats — accurately (no overclaiming; e.g. "reduced fidelity" stays
     labeled as such). Installation instructions must be real and congruent with the repo
     (declared deps, entry points, and commands actually exist — not hallucinated).
+
+### LLM / AI-agent dimensions (apply when the tool calls a model or is an agent/MCP server)
+Most CyberAgents Exchange listings are LLM/AI agents with live tool access, so these are
+frequently the highest-impact dimensions — not optional add-ons.
+
+13. **LLM prompt-injection (indirect).** Attacker-influenceable environment data — resource
+    names/ARNs/tags, plugin *output*, cert CNs, scraped CVE text, hostnames, chat/webhook
+    content — must NOT be able to redirect the model's instructions or tool calls when
+    concatenated into a prompt (this is a different sink than dimension 2's markup escaping).
+    The model often holds state-changing MCP tools, so a poisoned finding steering a tool call
+    is a real threat. **Prove it:** put an injected-instruction payload in a scanned field
+    ("ignore prior instructions and …") and confirm the agent fences/ignores it. Untrusted
+    content should be delimited/labeled as data, never merged into the instruction channel.
+
+14. **AI data handling — at rest & vendor egress.** (a) Sensitive scan *output* written to
+    disk (exposed-secret locations, PII/PHI, hostnames/IPs, identities, exposed IP:ports — an
+    aggregated exploit map) is redacted/encrypted with retention/cleanup guidance. (b) Data
+    sent to any third-party LLM is minimized, and its data-classification/residency is
+    documented — disclosing the endpoint (dimension 10) is necessary but not sufficient.
+
+15. **LLM output grounding & non-determinism.** Model-produced verdicts/artifacts (reports,
+    SSVC/severity calls, generated remediation CLI or SQL) are grounded — every emitted fact
+    traces to a source, not hallucinated hosts/CVEs. Output-contract validation runs
+    **server-side / on the trust boundary**, not only client-side. Non-reproducibility of
+    LLM output is disclosed; lenient regex-fallback JSON parsing is flagged.
+
+16. **Token / cost & runaway-loop controls.** LLM calls have hard **token/turn/spend caps**
+    and bounded context growth (no unbounded pagination into context, no per-keystroke resend
+    of growing history, no uncapped `max_tokens`). Scheduled/multi-agent/loop invocations
+    can't run away against a paid provider.
+
+17. **Access control & agent authority.** Any served endpoint (UI/API/MCP) requires
+    authN/authZ — no binding to `0.0.0.0` without auth, no wildcard CORS, no CSRF-free
+    state-changing routes, no debug endpoints in prod. MCP transport is authenticated. Every
+    state-changing tool call (restart/unlink, tag/ACR write, scan launch, SSH/RCE, SQL, email
+    send) is gated by an **enforced control**, not merely a prompt instruction or an env flag.
+
+18. **Supply-chain provenance.** Packages, container images, CI actions, and CDN assets are
+    pinned to immutable versions/digests, with SRI on CDN `<script>`/`<link>`. No moving tags
+    (`@main`), no runtime `docker pull` of unverified images, no imports undeclared in the
+    manifest, `npm ci` (not `npm install`) in CI.
 
 ## Output
 
