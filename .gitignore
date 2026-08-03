@@ -1,0 +1,12 @@
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+__pycache__/
+# never commit secrets
+*.env
+*token*.json
+*credentials*.json
+*.pem
+*.key
