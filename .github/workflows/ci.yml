@@ -35,6 +35,20 @@ jobs:
           bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -color
 
+  helper-scripts:
+    name: Helper scripts (shellcheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck the shipped scripts
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y shellcheck
+          shellcheck -S warning scripts/*.sh
+      - name: Run helper-script tests
+        # The skill preaches "prove your regression tests are real guards" (dim 11), so its own
+        # shipped tools (mutation-check, empty-relationship-scan) are tested and gated here.
+        run: bash scripts/test_scripts.sh
+
   skill-structure:
     name: SKILL.md structure (Exchange-loadable)
     runs-on: ubuntu-latest
