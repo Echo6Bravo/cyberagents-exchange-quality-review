@@ -1,5 +1,5 @@
 ---
-name: quality-review
+name: cyberagents-exchange-quality-review
 description: >-
   Adversarial pre-submission quality gate for cybersecurity agents/skills/MCP servers,
   especially those bound for the Tenable CyberAgents Exchange. Systematically hunts the
@@ -14,7 +14,7 @@ description: >-
 
 # Quality review — a pre-submission gate for CyberAgents Exchange work
 
-**Invocation:** run a quality review on this repo (or `/quality-review`).
+**Invocation:** run a quality review on this repo (or `/cyberagents-exchange-quality-review`).
 
 A repeatable adversarial pass. The goal is to find, up front, the issues that would otherwise
 surface after "done." Run every dimension, report findings ranked most-severe first, each with

@@ -6,7 +6,7 @@ If you find a security issue in this skill — for example, guidance that could 
 reviewer to run an unsafe command, or a flaw in `setup.sh` — please report it privately:
 
 - Open a **GitHub Security Advisory** on this repository
-  ([Security → Advisories → Report a vulnerability](https://github.com/Echo6Bravo/quality-review-skill/security/advisories/new)), or
+  ([Security → Advisories → Report a vulnerability](https://github.com/Echo6Bravo/cyberagents-exchange-quality-review/security/advisories/new)), or
 - Open a regular issue **only if it is not sensitive**.
 
 Please include: what the problem is, how to reproduce it, and the impact. Expect an initial

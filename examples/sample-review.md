@@ -1,6 +1,6 @@
 # Example output — a quality-review run
 
-This is an **illustrative** example of what `/quality-review` produces, so you can see the
+This is an **illustrative** example of what `/cyberagents-exchange-quality-review` produces, so you can see the
 shape of the output before running it. It reviews a fictional Exchange-bound agent
 ("acme-vuln-notifier": an LLM agent that pulls Tenable findings, summarizes them with a model,
 and posts to Slack). Findings, line numbers, and repo are invented for illustration.

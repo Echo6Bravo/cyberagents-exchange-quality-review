@@ -1,4 +1,4 @@
-# quality-review — a pre-submission quality gate for CyberAgents Exchange work
+# cyberagents-exchange-quality-review — a pre-submission quality gate for CyberAgents Exchange work
 
 A Claude Code **skill** that runs an adversarial, proof-over-assertion quality and security
 review of a cybersecurity agent / skill / MCP server **before** you push it publicly or submit
@@ -14,7 +14,7 @@ review with fewer round-trips.
 
 ## What it does
 
-Invoke it (e.g. "run a quality review", or `/quality-review`) and it works **18 dimensions**,
+Invoke it (e.g. "run a quality review", or `/cyberagents-exchange-quality-review`) and it works **18 dimensions**,
 ranked by customer impact, reporting findings most-severe-first with a concrete repro and fix,
 then an explicit **verdict** (ready, or the blocking items).
 
@@ -46,15 +46,15 @@ Clone into your Claude Code skills directory:
 
 ```bash
 # global (all projects)
-git clone https://github.com/Echo6Bravo/quality-review-skill.git \
-  ~/.claude/skills/quality-review
+git clone https://github.com/Echo6Bravo/cyberagents-exchange-quality-review.git \
+  ~/.claude/skills/cyberagents-exchange-quality-review
 
 # or per-project
-git clone https://github.com/Echo6Bravo/quality-review-skill.git \
-  .claude/skills/quality-review
+git clone https://github.com/Echo6Bravo/cyberagents-exchange-quality-review.git \
+  .claude/skills/cyberagents-exchange-quality-review
 ```
 
-Then invoke it in Claude Code: **"run a quality review on this repo"** or `/quality-review`.
+Then invoke it in Claude Code: **"run a quality review on this repo"** or `/cyberagents-exchange-quality-review`.
 Skills follow the [Agent Skills](https://docs.anthropic.com/en/docs/claude-code/skills)
 standard, so it also works in other assistants that support it.
 
