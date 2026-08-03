@@ -56,13 +56,29 @@ standard, so it also works in other assistants that support it.
 
 ## Optional tooling (the skill uses these if present)
 
+The scanners are **optional** — the skill degrades gracefully and, on every run, tells you the
+coverage level up front (which tools ran, which dimensions are degraded). For the deepest
+review, install the toolkit in one step:
+
 ```bash
-brew install gitleaks ruff shellcheck actionlint   # macOS
-pipx install bandit                                 # or: brew install bandit
+bash setup.sh          # installs gitleaks, ruff, bandit, shellcheck, actionlint (Homebrew/pipx)
+bash setup.sh --check  # just report what's present/missing, install nothing
 ```
 
-CodeQL runs best as a GitHub Actions workflow (`github/codeql-action`), which is free for
-public repositories and needs nothing installed locally.
+Or install manually: `brew install gitleaks ruff shellcheck actionlint` and
+`pipx install bandit`.
+
+**CodeQL is deliberately not installed locally.** It runs best as a GitHub Actions workflow
+(`github/codeql-action`) on the repository you're reviewing — free for public repos, nothing
+to install, results in the repo's Security tab. The skill *recommends adding that workflow*
+and confirms it's green; it does not (and cannot) run CodeQL on your machine or someone else's
+repo for them.
+
+> **What this skill is:** instructions that guide an AI assistant — not a standalone program.
+> It installs nothing without your approval and runs commands in *your* environment. Its
+> thoroughness depends on the assistant executing the probes and on which tools are present
+> (hence the up-front coverage report). Treat its verdict as a strong pre-check, not a
+> certification.
 
 ## Prerequisites
 

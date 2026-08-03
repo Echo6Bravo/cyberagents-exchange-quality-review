@@ -29,9 +29,26 @@ rather than reasoning about it. **Prefer proof over assertion.**
 > of truth. This skill is a community contribution and is **not** an official Tenable tool or
 > an assurance of acceptance.
 
+## Preflight — declare the coverage level BEFORE reviewing
+First, check which scanners are available and tell the user the resulting coverage, so the
+verdict is never trusted beyond what actually ran. Run `bash setup.sh --check` if the repo has
+it, else probe directly:
+```bash
+for t in gitleaks ruff bandit shellcheck actionlint; do
+  command -v "$t" >/dev/null 2>&1 && echo "present: $t" || echo "MISSING: $t"
+done
+```
+Then state, up front, something like: *"Running with gitleaks+ruff+bandit present; shellcheck
+and actionlint MISSING → the shell and workflow dimensions run in degraded (manual) mode."*
+Offer to install missing tools (`bash setup.sh`, or `brew install …` / `pipx install bandit`)
+— but **only with the user's approval**; never assume you may install software. If a tool
+stays missing, run that dimension's documented fallback and **label the finding "degraded —
+<tool> not available"** so the gap is visible. CodeQL is a GitHub-Actions workflow on the
+target repo, not a local install (see the toolkit note).
+
 ## Standard toolkit — RUN these, don't eyeball
 Run whatever of these the language/stack supports; treat findings as input to the relevant
-dimension, not a substitute for it. Install if missing.
+dimension, not a substitute for it. Install only with the user's approval (`bash setup.sh`).
 - **Secrets:** `gitleaks git --no-banner --redact .` over **full history** (fetch-depth 0 in CI).
 - **Python lint/SAST:** `ruff check .` and `bandit -r . --skip B101` (B101=asserts are usually
   intentional dev-time checks — skip with a documented reason, don't rewrite working asserts).
