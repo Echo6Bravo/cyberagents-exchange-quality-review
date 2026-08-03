@@ -7,7 +7,8 @@ anything?" from a gut check into a repeatable checklist that finds the failure c
 actually hurt a customer — and mirrors the Exchange's own reviewer checklist so you clear
 review with fewer round-trips.
 
-> This is a community contribution. It is **not** an official Tenable tool, and passing it is
+> This is a community contribution authored by a Tenable employee (hence the © Tenable, Inc. on
+> the MIT license), but it is **not** an official, supported Tenable product, and passing it is
 > **not** a guarantee of Exchange acceptance — the live Exchange checklist and `validator.py`
 > are always authoritative. The skill fetches and defers to them at review time.
 
