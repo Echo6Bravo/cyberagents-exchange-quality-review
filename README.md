@@ -65,6 +65,13 @@ public repositories and needs nothing installed locally.
 - **`gh`** (GitHub CLI) for the Exchange-submission checks (reading the live checklist/validator).
 - The scanners above are optional — the skill degrades gracefully and notes what it couldn't run.
 
+## CI
+
+This repo runs the same gates it recommends (dimensions 8, 11, 18): **gitleaks** full-history
+secret scan, **actionlint** on its own workflow, and a **SKILL.md structure check** (valid
+`name`/`description` frontmatter, substantive body, all 18 dimensions present, no leftover
+placeholders). See `.github/workflows/ci.yml`.
+
 ## Known limitations
 
 - It is a **procedure that guides an assistant**, not a static analyzer — its thoroughness

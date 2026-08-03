@@ -1,0 +1,68 @@
+name: CI
+
+# This skill preaches "gate secrets, lint workflows, validate structure, keep CI green"
+# (see SKILL.md dimensions 8, 11, 18) — so it runs those same gates on itself.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scan entire history, not just the tip
+      - name: Install gitleaks
+        run: |
+          VER=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan
+        run: gitleaks git --no-banner --redact .
+
+  actionlint:
+    name: actionlint (workflow lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install + run actionlint
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  skill-structure:
+    name: SKILL.md structure (Exchange-loadable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate SKILL.md frontmatter + body
+        # Mirrors the Exchange skill-congruence check: SKILL.md at root with name/description
+        # YAML frontmatter and a substantive body; no leftover template placeholders.
+        run: |
+          python3 - <<'PY'
+          import sys, re
+          src = open("SKILL.md").read()
+          errs = []
+          if not src.startswith("---"):
+              errs.append("no YAML frontmatter delimiter at top")
+          parts = src.split("---", 2)
+          fm = parts[1] if len(parts) >= 3 else ""
+          body = parts[2] if len(parts) >= 3 else ""
+          if not re.search(r'(?m)^name:\s*\S', fm):        errs.append("frontmatter missing non-empty name:")
+          if not re.search(r'(?m)^description:\s*\S', fm): errs.append("frontmatter missing non-empty description:")
+          if len(body.strip()) < 500:                       errs.append("body is not substantive")
+          for ph in ("your-github-username", "tag1", "TODO", "FIXME", "reference memory"):
+              if ph.lower() in src.lower():                 errs.append(f"leftover placeholder/ref: {ph}")
+          # every dimension 1..18 present as a numbered heading
+          nums = set(int(n) for n in re.findall(r'(?m)^(\d+)\.\s+\*\*', body))
+          missing = [n for n in range(1, 19) if n not in nums]
+          if missing:                                       errs.append(f"missing dimension(s): {missing}")
+          if errs:
+              print("SKILL.md validation FAILED:"); [print("  -", e) for e in errs]; sys.exit(1)
+          print(f"SKILL.md valid: {len(nums)} dimensions, body {len(body.strip())} chars")
+          PY
