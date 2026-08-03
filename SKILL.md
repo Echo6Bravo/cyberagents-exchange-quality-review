@@ -76,10 +76,18 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    CodeQL's taint queries are the automated backstop — but the payload-injection probe is the
    primary proof; don't rely on the scanner alone.
 
-3. **Robustness on messy data.** Null/missing fields, wrong types, duplicates, empty result
-   sets, truncated/interrupted inputs, malformed pages. Each must fail cleanly with an
-   actionable message (never a raw stack trace) or degrade gracefully. Verify the exit-code
-   contract.
+3. **Robustness on messy data AND messy invocation.** Two surfaces, same bar — fail cleanly
+   with an actionable message (never a raw stack trace) or degrade gracefully, and verify the
+   exit-code contract on both.
+   - *Data plane:* null/missing fields, wrong types, duplicates, empty result sets,
+     truncated/interrupted inputs, malformed pages.
+   - *Invocation plane (often the neglected one):* every entry point an operator or scheduler
+     drives — CLI args, flags, env vars, config files. Probe missing/extra/reordered args, a
+     non-existent or unreadable input file, a non-numeric value where an int is expected, an
+     empty/`--help`-only call. A tool whose data path is hardened but whose argument parser
+     throws `IndexError`/`FileNotFoundError`/`ValueError` on bad input still fails the
+     dimension. **Probe each entry point, not just the happy-path one covered by tests** —
+     the invocation the test suite never calls is exactly where the raw traceback hides.
 
 4. **Scale.** Estimate volume at 10–50x the test environment (pull size, memory, output size,
    algorithmic complexity). Confirm caps/streaming/chunking exist and that nothing is silently
@@ -126,7 +134,10 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     findings; (b) CI runs it across the supported version matrix; (c) the standard toolkit above
     (gitleaks full-history, ruff, bandit, shellcheck, actionlint) runs as **blocking** CI jobs,
     not advisory; (d) CodeQL runs as a workflow. Confirm CI + CodeQL are actually **green** on
-    the latest commit — a red or never-run pipeline is a blocking finding.
+    the latest commit — a red or never-run pipeline is a blocking finding. **Watch for
+    happy-path-only coverage:** if the suite exercises every entry point but only with valid
+    input, the failure modes in dimension 3 (bad args, missing files) are untested by
+    construction — add the negative/bad-input cases too.
 
 12. **Docs.** README/SKILL state what it does, prerequisites, how to run, outputs, limits, and
     any fidelity/coverage caveats — accurately (no overclaiming; e.g. "reduced fidelity" stays
