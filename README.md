@@ -36,6 +36,9 @@ rather than reasoning about it. It leans on a standard toolkit where available �
 **shellcheck**, **actionlint**, and **CodeQL** (as a GitHub Action) — and treats each as a
 CI gate that must stay green.
 
+See [`examples/sample-review.md`](examples/sample-review.md) for what a run's output looks
+like.
+
 ## Install
 
 Clone into your Claude Code skills directory:
@@ -101,6 +104,13 @@ placeholders). See `.github/workflows/ci.yml`.
 - The Exchange checklist evolves; the copy embedded in `SKILL.md` is a snapshot. The skill
   fetches the live version and defers to it.
 - It cannot replace the Exchange's **two-human reviewer** sign-off.
+
+## Project
+
+- [CHANGELOG.md](./CHANGELOG.md) — release history (SemVer).
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — how to propose changes and the bar they must meet.
+- [SECURITY.md](./SECURITY.md) — how to report a security issue.
+- [examples/sample-review.md](./examples/sample-review.md) — illustrative output.
 
 ## License
 
