@@ -13,14 +13,19 @@ review with fewer round-trips.
 
 ## What it does
 
-Invoke it (e.g. "run a quality review", or `/quality-review`) and it works 12 dimensions,
+Invoke it (e.g. "run a quality review", or `/quality-review`) and it works **18 dimensions**,
 ranked by customer impact, reporting findings most-severe-first with a concrete repro and fix,
-then an explicit **verdict** (ready, or the blocking items):
+then an explicit **verdict** (ready, or the blocking items).
 
-1. Detection false-negatives · 2. Injection/XSS · 3. Messy-data robustness · 4. Scale ·
-5. Operational (exit codes / retry / determinism) · 6. Version portability · 7. Schema-drift ·
-8. Secrets (full git history) · 9. Malicious/offensive self-check · 10. Undisclosed egress ·
-11. Tests & CI · 12. Docs.
+**Core (1–12):** detection false-negatives; injection/XSS; messy-data robustness; scale;
+operational (exit codes / retry / determinism); version portability & TLS; schema/contract
+drift; secrets (full git history + credential-at-rest); malicious/offensive self-check;
+undisclosed egress; tests & CI; docs.
+
+**LLM / AI-agent (13–18)** — for tools that call a model or act as an agent/MCP server:
+prompt-injection (indirect); AI data handling (at-rest & vendor egress); LLM output grounding
+& non-determinism; token/cost & runaway-loop controls; access control & agent authority
+(endpoint authN/authZ, MCP auth, tool gating); supply-chain provenance.
 
 Plus a **Tenable Exchange submission** section that mirrors the live contributing checklist
 (automated screening, listing requirements, listing↔repo congruence, outright-rejection gates).
