@@ -14,6 +14,8 @@ description: >-
 
 # Quality review — a pre-submission gate for CyberAgents Exchange work
 
+**Invocation:** run a quality review on this repo (or `/quality-review`).
+
 A repeatable adversarial pass. The goal is to find, up front, the issues that would otherwise
 surface after "done." Run every dimension, report findings ranked most-severe first, each with
 a concrete repro and fix. Do NOT rubber-stamp: if a dimension is genuinely N/A for the

@@ -19,7 +19,7 @@ Initial public release.
   - LLM/AI-agent dimensions (13–18): indirect prompt-injection, AI data handling (at-rest &
     vendor egress), LLM output grounding & non-determinism, token/cost & loop controls,
     access control & agent authority, supply-chain provenance. These were derived from
-    analyzing the 13 live Exchange agent repositories, most of which are LLM/MCP agents.
+    analyzing the live Exchange agent repositories, most of which are LLM/MCP agents.
 - Up-front **coverage preflight**: reports which scanners are present and which dimensions
   run in degraded mode before producing a verdict.
 - `setup.sh` — one-command install of the optional toolkit (`--check` reports without
