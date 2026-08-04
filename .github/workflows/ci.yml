@@ -70,11 +70,19 @@ jobs:
           if not re.search(r'(?m)^name:\s*\S', fm):        errs.append("frontmatter missing non-empty name:")
           if not re.search(r'(?m)^description:\s*\S', fm): errs.append("frontmatter missing non-empty description:")
           if len(body.strip()) < 500:                       errs.append("body is not substantive")
-          for ph in ("your-github-username", "tag1", "TODO", "FIXME", "reference memory"):
+          for ph in ("your-github-username", "tag1", "reference memory"):
               if ph.lower() in src.lower():                 errs.append(f"leftover placeholder/ref: {ph}")
-          # every dimension 1..18 present as a numbered heading
+          # TODO/FIXME are banned as leftover markers but legitimately *named* in prose
+          # (dimension 19 tells reviewers to require them on unfinished values). Rather than
+          # drop the pattern -- which would blind the check to a real leftover -- exempt only
+          # occurrences inside inline-code spans, so a bare one anywhere else still fails.
+          prose = re.sub(r'`[^`\n]*`', '', src)
+          for ph in ("TODO", "FIXME"):
+              if ph.lower() in prose.lower():
+                  errs.append(f"leftover marker outside inline code: {ph}")
+          # every dimension 1..19 present as a numbered heading
           nums = set(int(n) for n in re.findall(r'(?m)^(\d+)\.\s+\*\*', body))
-          missing = [n for n in range(1, 19) if n not in nums]
+          missing = [n for n in range(1, 20) if n not in nums]
           if missing:                                       errs.append(f"missing dimension(s): {missing}")
           if errs:
               print("SKILL.md validation FAILED:"); [print("  -", e) for e in errs]; sys.exit(1)
