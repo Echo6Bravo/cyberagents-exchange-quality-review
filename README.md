@@ -14,7 +14,7 @@ review with fewer round-trips.
 
 ## What it does
 
-Invoke it (e.g. "run a quality review", or `/cyberagents-exchange-quality-review`) and it works **18 dimensions**,
+Invoke it (e.g. "run a quality review", or `/cyberagents-exchange-quality-review`) and it works **19 dimensions**,
 ranked by customer impact, reporting findings most-severe-first with a concrete repro and fix,
 then an explicit **verdict** (ready, or the blocking items).
 
@@ -27,6 +27,12 @@ undisclosed egress; tests & CI; docs.
 prompt-injection (indirect); AI data handling (at-rest & vendor egress); LLM output grounding
 & non-determinism; token/cost & runaway-loop controls; access control & agent authority
 (endpoint authN/authZ, MCP auth, tool gating); supply-chain provenance.
+
+**Generated artifacts (19)** — for tools that *emit* something a human or CI later runs
+(remediation scripts, IaC, SQL, playbooks, config): execution-scope correctness — no single
+artifact spans more scope than its tooling can address in one invocation, it fails closed on a
+scope mismatch rather than trusting its filename, unfinished values are visibly marked, and the
+real parser validates each file in isolation.
 
 Plus a **Tenable Exchange submission** section that mirrors the live contributing checklist
 (automated screening, listing requirements, listing↔repo congruence, outright-rejection gates).
@@ -94,7 +100,7 @@ repo for them.
 
 This repo runs the same gates it recommends (dimensions 8, 11, 18): **gitleaks** full-history
 secret scan, **actionlint** on its own workflow, and a **SKILL.md structure check** (valid
-`name`/`description` frontmatter, substantive body, all 18 dimensions present, no leftover
+`name`/`description` frontmatter, substantive body, all 19 dimensions present, no leftover
 placeholders). See `.github/workflows/ci.yml`.
 
 ## Known limitations

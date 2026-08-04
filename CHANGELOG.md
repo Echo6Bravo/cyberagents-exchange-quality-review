@@ -17,6 +17,33 @@ All notable changes to this skill are documented here. The format follows
   dim 1 gains a cross-variant silent-zero probe and an empty/absent-relationship probe; dim 4
   asks whether the code path used *at scale* is the one actually tested; dim 11 adds
   prove-the-test-isn't-a-tautology and synthetic-vs-live parity.
+- **Dimension 19 — execution-scope correctness**, in a new conditional "generated artifacts"
+  section for tools that *emit* something a human or CI later runs (remediation scripts, IaC,
+  SQL, playbooks, config). Distinct from every existing dimension because the failure is not an
+  error but a **wrong success**: an artifact spanning more scope than its tooling can address in
+  one invocation resolves identifiers against whichever scope the runner is authenticated to.
+  Derived from a real defect — Terraform/OpenTofu `import` blocks for two AWS accounts in one
+  file, where a same-named table in the wrong account would be adopted and reconfigured while
+  the plan reported success. Covers hard-vs-soft scope boundaries, failing closed on a scope
+  mismatch instead of trusting a filename, visibly-marked unfinished values, and validating each
+  emitted file in isolation with the real parser.
+- **Further probes from the same dogfooding round:**
+  - dim 4 — *fixed-text amplification*: measure bytes **per item at two scales**, not total
+    bytes; flat bytes/item means boilerplate is being re-emitted per item instead of per group
+    or per run. Includes the hoist-by-consequence rule (reference detail may move to a companion
+    file; irreversibility/cost/blast-radius warnings stay inline).
+  - dim 11 — *never weaken a security assertion to make a feature pass*: when a legitimate
+    change trips a safety blocklist, replace the blanket ban with an exact allowlist that stays
+    accounted for, rather than loosening the pattern.
+  - dim 11 — *correlated synthetic fixtures*: axes generated from one loop counter
+    (`account = i % 40`, `region = i % 4`) silently couple, so combination-dependent behavior is
+    never exercised and measurements taken on them flatter the code.
+
+### Changed
+- Toolkit guidance on `bandit` B101: scope the skip to tests rather than repo-wide, and treat an
+  `assert` in library/runtime code as a finding — `python -O` strips it, so an assert-protected
+  invariant is unenforced in exactly the optimized build where violating it does damage.
+- CI structure check and README now assert **19** dimensions.
 
 ## [1.0.0] — 2026-08-03
 
