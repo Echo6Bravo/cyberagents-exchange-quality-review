@@ -50,6 +50,41 @@ All notable changes to this skill are documented here. The format follows
   a real resource exhausted at the tool's claimed scale, or volume that defeats review). Dim 4
   and dim 19 carry their own severity guidance, including that a *hard*-boundary scope span is
   Critical while a *soft*-boundary one is Informational.
+- **Three output buckets — rejection gates → defects → informational.** The `## Output` section is
+  restructured around *who decides and against what standard*, rather than by topic. Topic buckets
+  ("security" / "best practice" / "efficiency") fail because findings belong to two at once — an
+  uncapped LLM pagination loop is simultaneously a cost and a security problem — while there is
+  only one question that determines where it goes: does it block? Serves both audiences: a
+  reviewer reads bucket 1 to decide accept/reject and can stop; a contributor reads buckets 2–3
+  for the fix list.
+  - **Rejection gates** are *pulled* verbatim from the live Exchange checklist and are binary with
+    **no severity** — the checklist says a detected credential is "an immediate rejection," so
+    there is no *how bad*. A failed gate sets the verdict to NOT READY on its own.
+  - **Defects** carry a severity, and **every severity must cite its basis** (an Exchange checklist
+    item, a CodeQL `security-severity` score, a scanner rule plus its own rating, or the rubric
+    row). An unsourced label is how an unexamined guess acquires the appearance of authority.
+  - **A scanner rating is evidence that may raise but never lower a finding.** Verified, not
+    assumed: `bandit` rates a hardcoded password (B105 → CWE-259) **LOW/MEDIUM**, the exact class
+    the Exchange rejects outright; `gitleaks` 8.30.1 emits no severity at all; `ruff` has no
+    severity field. Only CodeQL exposes a real score. So scanner output cannot be the severity
+    source. Believing a scanner finding unreachable is a *note on* it, not a downgrade.
+  - **CWE is an optional classification field, not the severity source.** Considered as the source
+    of truth for defect severity and rejected on two grounds. First, coverage: CWE maps cleanly or
+    partially to 11 of the 19 dimensions and has no honest entry for 8 of them, including dim 1
+    (a detector silently missing an in-scope finding — the skill's highest-ranked dimension), dim
+    11 (a regression test that asserts nothing), dim 19 (an artifact targeting the wrong account)
+    and dim 9 (weaponized intent) — CWE catalogs *code weaknesses*, which those are not. Second,
+    and decisively: CWE is a taxonomy, not a scale — the hardcoded password above *has* a CWE and
+    is still rated LOW by the tool that assigned it. So the guidance is to cite a CWE where a real
+    one fits, and to state "no applicable CWE" where none does, because a wrong-but-official-looking
+    label misdirects triage worse than an absent one.
+- **CI enforcement of the bucket structure, each check proven with a negative control**
+  (dimension 11 applied to this repo): the three buckets must be present *and in order*; the
+  cite-your-basis, raise-but-never-lower, and CWE-is-optional rules must remain stated; and
+  `examples/sample-review.md` must keep severity labels inside the Defects bucket only, cite a
+  basis there, and carry at least one. Every check was verified to fail when the thing it guards
+  is removed — including two controls that were themselves mis-specified and corrected rather
+  than accepted as passes.
 
 ### Changed
 - Toolkit guidance on `bandit` B101: scope the skip to tests rather than repo-wide, and treat an
@@ -58,10 +93,13 @@ All notable changes to this skill are documented here. The format follows
   (Verified: `python3 -O` returns `-5` from a function whose `assert x > 0` should have rejected it.)
 - CI structure check and README now assert **19** dimensions, that all five severity levels stay
   defined, and that `examples/sample-review.md` uses only defined labels.
-- `examples/sample-review.md` re-labeled to the taxonomy. It previously used ad-hoc
+- `examples/sample-review.md` rewritten into the three buckets. It previously used ad-hoc
   `BLOCKING`/🟠/🟡 markers whose verdict text disagreed with them (two 🟠 items were called
-  "medium", 🟡 "low"). Now includes an Informational example so the non-blocking case is
-  demonstrated rather than only described.
+  "medium", 🟡 "low"). It now demonstrates a failed rejection gate as a gate rather than as a
+  "Critical" finding, shows a cited basis on every severity, shows a CWE cited on three defects
+  and explicitly absent on the fourth, includes an "assessed and not raised" entry so a scanner
+  suppression is accounted for rather than silently dropped, and keeps the Informational item
+  visibly outside the blocking list.
 
 ## [1.0.0] — 2026-08-03
 
