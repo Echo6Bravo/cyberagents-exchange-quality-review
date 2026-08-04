@@ -162,11 +162,11 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      links) can move to a companion file, but anything a reader must see *before acting* —
      irreversibility, cost, blast radius — stays inline next to the thing it warns about. A
      warning in a sibling file is a warning that gets skipped.
-     **Severity: Informational by default** — verbose output is waste, not a defect. Promote it
-     only with the consequence named: it breaches a documented limit, it exhausts a real
-     resource at the tool's claimed scale (disk, memory, a paid token budget, a rate limit), or
-     the volume itself defeats review so changes ship unexamined. "It could be smaller" is
-     Informational; report it, don't block on it.
+     **Bucket: Informational by default** — verbose output is waste, not a defect. Move it into
+     Defects (and only then give it a severity) with the consequence named: it breaches a
+     documented limit, it exhausts a real resource at the tool's claimed scale (disk, memory, a
+     paid token budget, a rate limit), or the volume itself defeats review so changes ship
+     unexamined. "It could be smaller" is Informational; report it, don't block on it.
 
 5. **Operational.** Exit codes a scheduler can branch on; partial-failure tolerance (one unit
    fails → flag the gap, don't lose everything); API retry/backoff on 429/5xx; determinism/
@@ -305,10 +305,10 @@ carries its own failure modes. Skip with a note if the tool only reports and nev
     per command can span regions). Splitting on a hard boundary is a *correctness* requirement,
     not tidiness — so it needs a test asserting no artifact ever spans one, at the smallest
     input size where it could (two items), and not defeated by a `--no-split`/size-limit flag.
-    **Severity:** a *hard*-boundary span is **Critical** (it acts on the wrong scope while
-    reporting success); a *soft*-boundary span is **Informational** (the artifact is correct,
-    splitting is only ergonomics). Getting that distinction wrong in either direction is the
-    main way this dimension gets misapplied — so state which kind of boundary you found.
+    **Where it lands:** a *hard*-boundary span is a **Critical** defect (it acts on the wrong
+    scope while reporting success); a *soft*-boundary span is **Informational** (the artifact is
+    correct, splitting is only ergonomics). Getting that distinction wrong in either direction is
+    the main way this dimension gets misapplied — so state which kind of boundary you found.
     - **Fail closed on a scope mismatch.** The artifact should refuse to run against the wrong
       scope rather than trust its filename. Prefer a self-check the runner cannot skip — an
       identity preflight that exits non-zero (`aws sts get-caller-identity` compared to the
@@ -327,30 +327,82 @@ carries its own failure modes. Skip with a note if the tool only reports and nev
 
 ## Output
 
-Report as: dimension → findings (most severe first) with `file:line`, a **severity label**, a
-concrete failure scenario, and the specific fix. End with an explicit **verdict**: ready to
-submit, or the blocking items. If findings are fixed in the same pass, re-run the relevant probe
-to confirm, and add/point to the regression test.
+Report in **three buckets, in this order**. The buckets differ by *who decides and against what
+standard*, which is why a finding has exactly one home even when it spans topics (an uncapped LLM
+pagination loop is both a cost and a security problem, but there is only one question that
+matters about it: does it block?). Serves both audiences — a reviewer reads bucket 1 to decide
+accept/reject and stops; a contributor reads buckets 2 and 3 to know what to fix.
 
-**Label every finding with one of these. Severity is about consequence, not effort to fix:**
+### 1. Rejection gates — pulled, binary, no severity
+
+Taken **verbatim from the live Exchange checklist** (`docs/contributing_checklist.md`), not from
+your judgment. These are pass/fail by definition: the checklist says a repo with a committed
+credential "is rejected outright" and "any detected credential is an immediate rejection." Cite
+the checklist item you are applying. If any gate fails, the verdict is NOT READY regardless of
+everything else, and no severity label is needed or appropriate — there is no "how bad."
+
+At writing time: offensive/weaponized behavior; hardcoded secrets (gitleaks, full history);
+undocumented outbound calls; competitor targeting; weakening security controls; no detectable
+open-source license; archive-only content. **Fetch the live list — it wins over this copy.**
+
+### 2. Defects — severity from the rubric below, scanner output as cited evidence
+
+Everything the probes found that is actually wrong. Each entry carries `file:line`, a severity
+label, a concrete failure scenario, the specific fix, and a **cited basis** for the severity.
 
 | Severity | Meaning | Blocks shipping? |
 | --- | --- | --- |
-| **Critical** | Silent wrong answers, or harm to the user or a third party: a leaked/committed credential, a missed detection the tool claims to cover, an artifact that acts on the wrong account/tenant, weaponized or offensive behavior, undisclosed data egress, an unauthenticated state-changing endpoint. | **Yes** |
+| **Critical** | Silent wrong answers, or harm to the user or a third party: a missed detection the tool claims to cover, an artifact that acts on the wrong account/tenant, an unauthenticated state-changing endpoint, prompt injection reaching a live tool call. | **Yes** |
 | **High** | Fails or corrupts under realistic conditions: a crash with a raw traceback on ordinary bad input, an exit code a scheduler will misread, an unverified-TLS request carrying a credential, a plaintext secret at rest, a regression test that is a tautology. | **Yes** |
 | **Medium** | Degrades or misleads without being wrong: a documented limit that isn't enforced, missing retry/backoff, an unpinned dependency, docs that overclaim coverage. | Reviewer's call |
 | **Low** | Real but bounded: a narrow edge case, an inconsistent message, a missing non-critical test. | No |
-| **Informational** | **Not a defect.** Efficiency, cost, ergonomics, style, and structural observations — output size, token spend, wall-clock, naming, refactors, dimension-4 amortization findings that don't cross a documented cap. Worth reporting; never a blocking item. | No |
 
-**Efficiency and other non-security findings are Informational by default**, and must be labeled
-as such rather than left to read like defects — an unlabeled "85% of your output is boilerplate"
-next to a real credential leak inflates the leak's neighbors and dilutes the leak. Promote one
-only with a stated reason that names the consequence: it breaches a documented limit, it exhausts
-a real resource (memory, disk, a paid token budget, a rate limit) at the tool's own claimed
-scale, or the size itself defeats review (a diff no human will read, so changes ship unexamined).
+**Every severity must cite its basis** — one of `Exchange checklist §<item>`, `CodeQL
+security-severity <score>`, `<tool> <rule> <its rating>`, or `rubric: <which row above>`. A label
+with no cited basis is the failure mode this structure exists to prevent; it is how an
+unexamined guess acquires the appearance of authority.
+
+**A scanner's rating is evidence, never the verdict — and it can only ever raise a finding, not
+lower one.** Record the tool's own rating verbatim, then state your severity. You may rate
+*above* the scanner with a reason; you may **not** rate below it. This is not theoretical:
+`bandit` maps a hardcoded password to CWE-259 and rates it **LOW**, while the Exchange rejects
+such a submission outright. Scanner scores reflect pattern confidence, not blast radius. If you
+believe a scanner finding is unreachable, say so as a *note on* the finding and keep the
+severity — unreachability is an argument, not a downgrade.
+
+**CWE is optional, and is classification — not severity.** Cite a CWE when a real one fits
+(`CWE-79` for XSS, `CWE-295` for disabled TLS verification, `CWE-798`/`CWE-259` for hardcoded
+credentials, `CWE-502` for unsafe deserialization, `CWE-770`/`CWE-400` for an uncapped resource,
+`CWE-306`/`CWE-352` for missing authN/CSRF, `CWE-1427` for prompt injection, `CWE-829`/`CWE-1357`
+for unpinned supply chain) — it helps reviewers cross-reference and users search. **Omit it, and
+say "no applicable CWE", when none fits.** Roughly half these dimensions have no honest CWE:
+CWE catalogs *code weaknesses*, so "my detector silently missed an in-scope finding" (dim 1),
+"this artifact targets the wrong account" (dim 19), "this regression test asserts nothing"
+(dim 11) and "this tool is weaponized" (dim 9) have no entry. Forcing a loose CWE onto one of
+those is worse than omitting it — a wrong-but-official-looking label misdirects triage. Never
+let the presence or absence of a CWE change the severity.
+
+### 3. Informational — not defects, never blocking, no severity
+
+Efficiency, cost, ergonomics, style, and structural observations: output size, token spend,
+wall-clock, naming, refactors, dimension-4 amortization findings that cross no documented cap.
+Report them — they are often the most actionable items in a healthy repo — but they carry no
+severity and never appear in the verdict's blocking list. An unlabeled "68% of your output is
+boilerplate" sitting next to a real credential leak dilutes the leak.
+
+**Promote an Informational item into Defects only with the consequence named:** it breaches a
+documented limit, it exhausts a real resource (memory, disk, a paid token budget, a rate limit)
+at the tool's own claimed scale, or the volume itself defeats review so changes ship unexamined.
 Say which. **Never inflate an Informational finding to make a review look productive** — a review
-that reports five Informational items and no defects, clearly labeled, is an accurate review.
-The converse also holds: never demote a Critical to Informational because the fix is inconvenient.
+reporting five clearly-labeled Informational items and no defects is an accurate review. The
+converse also holds: never demote a real defect to Informational because the fix is inconvenient.
+
+### Verdict
+
+End with an explicit verdict: **ready to submit**, or the blocking items — every failed rejection
+gate, plus every Critical and High defect. State the counts per bucket so the shape of the review
+is visible at a glance. If findings are fixed in the same pass, re-run the relevant probe to
+confirm, and add or point to the regression test.
 
 ## For Tenable CyberAgents Exchange submissions specifically
 
