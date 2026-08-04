@@ -149,14 +149,24 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      an explanation, a caveat paragraph re-emitted once per item instead of once per group or
      once per run. Render at two sizes (e.g. 1k and 10k items) and compare **bytes/item**. If
      it stays flat, fixed text dominates and output is needlessly linear in items × prose; if
-     it falls, shared text is being amortized. Real case: 85% of a generator's output was
-     comments, with a per-policy block emitted once per *resource* — 587 times for 5 distinct
-     policies — and a how-to header repeated in all 159 files. Hoisting run-level text to a
-     companion README and grouping per policy cut bytes/item 45% at 1k and 67% at 50k.
+     it falls, shared text is being amortized. Real case: ~68% of a generator's output bytes
+     were comment lines, with a per-policy block emitted once per *resource* — 587 times for 5
+     distinct policies — and a how-to header repeated in all 159 files. Hoisting run-level text to a
+     companion README and grouping per policy cut bytes/item 14% at 1k items and 48% at 50k.
+     **That the saving grows with scale is the signal, and it is why one measurement cannot
+     tell you anything** — at 1k the fix looks marginal; the same fix is transformative at 50k.
+     Measure before *and* after on the *same* input distribution, and compare like with like
+     (per-item body against per-item body); mixing in run-level files or re-generating the
+     input between runs produces a flattering number that will not survive review.
      **Hoist by consequence, not by length:** reference detail (summary, prerequisites, docs
      links) can move to a companion file, but anything a reader must see *before acting* —
      irreversibility, cost, blast radius — stays inline next to the thing it warns about. A
      warning in a sibling file is a warning that gets skipped.
+     **Severity: Informational by default** — verbose output is waste, not a defect. Promote it
+     only with the consequence named: it breaches a documented limit, it exhausts a real
+     resource at the tool's claimed scale (disk, memory, a paid token budget, a rate limit), or
+     the volume itself defeats review so changes ship unexamined. "It could be smaller" is
+     Informational; report it, don't block on it.
 
 5. **Operational.** Exit codes a scheduler can branch on; partial-failure tolerance (one unit
    fails → flag the gap, don't lose everything); API retry/backoff on 429/5xx; determinism/
@@ -295,6 +305,10 @@ carries its own failure modes. Skip with a note if the tool only reports and nev
     per command can span regions). Splitting on a hard boundary is a *correctness* requirement,
     not tidiness — so it needs a test asserting no artifact ever spans one, at the smallest
     input size where it could (two items), and not defeated by a `--no-split`/size-limit flag.
+    **Severity:** a *hard*-boundary span is **Critical** (it acts on the wrong scope while
+    reporting success); a *soft*-boundary span is **Informational** (the artifact is correct,
+    splitting is only ergonomics). Getting that distinction wrong in either direction is the
+    main way this dimension gets misapplied — so state which kind of boundary you found.
     - **Fail closed on a scope mismatch.** The artifact should refuse to run against the wrong
       scope rather than trust its filename. Prefer a self-check the runner cannot skip — an
       identity preflight that exits non-zero (`aws sts get-caller-identity` compared to the
@@ -313,10 +327,30 @@ carries its own failure modes. Skip with a note if the tool only reports and nev
 
 ## Output
 
-Report as: dimension → findings (most severe first) with `file:line`, a concrete failure
-scenario, and the specific fix. End with an explicit **verdict**: ready to submit, or the
-blocking items. If findings are fixed in the same pass, re-run the relevant probe to confirm,
-and add/point to the regression test.
+Report as: dimension → findings (most severe first) with `file:line`, a **severity label**, a
+concrete failure scenario, and the specific fix. End with an explicit **verdict**: ready to
+submit, or the blocking items. If findings are fixed in the same pass, re-run the relevant probe
+to confirm, and add/point to the regression test.
+
+**Label every finding with one of these. Severity is about consequence, not effort to fix:**
+
+| Severity | Meaning | Blocks shipping? |
+| --- | --- | --- |
+| **Critical** | Silent wrong answers, or harm to the user or a third party: a leaked/committed credential, a missed detection the tool claims to cover, an artifact that acts on the wrong account/tenant, weaponized or offensive behavior, undisclosed data egress, an unauthenticated state-changing endpoint. | **Yes** |
+| **High** | Fails or corrupts under realistic conditions: a crash with a raw traceback on ordinary bad input, an exit code a scheduler will misread, an unverified-TLS request carrying a credential, a plaintext secret at rest, a regression test that is a tautology. | **Yes** |
+| **Medium** | Degrades or misleads without being wrong: a documented limit that isn't enforced, missing retry/backoff, an unpinned dependency, docs that overclaim coverage. | Reviewer's call |
+| **Low** | Real but bounded: a narrow edge case, an inconsistent message, a missing non-critical test. | No |
+| **Informational** | **Not a defect.** Efficiency, cost, ergonomics, style, and structural observations — output size, token spend, wall-clock, naming, refactors, dimension-4 amortization findings that don't cross a documented cap. Worth reporting; never a blocking item. | No |
+
+**Efficiency and other non-security findings are Informational by default**, and must be labeled
+as such rather than left to read like defects — an unlabeled "85% of your output is boilerplate"
+next to a real credential leak inflates the leak's neighbors and dilutes the leak. Promote one
+only with a stated reason that names the consequence: it breaches a documented limit, it exhausts
+a real resource (memory, disk, a paid token budget, a rate limit) at the tool's own claimed
+scale, or the size itself defeats review (a diff no human will read, so changes ship unexamined).
+Say which. **Never inflate an Informational finding to make a review look productive** — a review
+that reports five Informational items and no defects, clearly labeled, is an accurate review.
+The converse also holds: never demote a Critical to Informational because the fix is inconvenient.
 
 ## For Tenable CyberAgents Exchange submissions specifically
 
