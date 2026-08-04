@@ -86,28 +86,90 @@ jobs:
           if missing:                                       errs.append(f"missing dimension(s): {missing}")
           # The severity taxonomy must stay defined -- an unlabeled review makes an
           # efficiency note read like a credential leak, which is what it exists to prevent.
-          SEVERITIES = ("Critical", "High", "Medium", "Low", "Informational")
-          absent = [s for s in SEVERITIES if f"**{s}**" not in body]
-          if absent:                                        errs.append(f"severity level(s) not defined: {absent}")
+          # Only the four GRADED levels are severities; Informational is a bucket that carries
+          # none, so it is checked as a heading below rather than as a table row. Requiring the
+          # rows inside the Defects section keeps a stray bold mention elsewhere in the prose
+          # from satisfying this -- the earlier version passed on exactly that accident.
+          SEVERITIES = ("Critical", "High", "Medium", "Low")
+          d0 = body.find("### 2. Defects")
+          d1 = body.find("### 3. Informational")
+          defects = body[d0:d1] if 0 <= d0 < d1 else ""
+          if not defects:
+              errs.append("cannot locate the Defects section to check the severity table")
+          absent = [s for s in SEVERITIES if f"| **{s}** |" not in defects]
+          if absent:                                        errs.append(f"severity row(s) missing from the Defects table: {absent}")
+          # The three output buckets, in order. They encode *who decides against what standard*
+          # (pulled gate / assigned severity / no severity), so dropping or reordering one is
+          # what lets an efficiency note drift into the blocking list.
+          BUCKETS = ("### 1. Rejection gates", "### 2. Defects", "### 3. Informational")
+          at = [(b, body.find(b)) for b in BUCKETS]
+          for b, i in at:
+              if i < 0:                                     errs.append(f"output bucket missing: {b}")
+          found = [i for _, i in at if i >= 0]
+          if len(found) == len(BUCKETS) and found != sorted(found):
+              errs.append("output buckets are out of order (gates -> defects -> informational)")
+          # The two rules that keep an agent-assigned severity defensible. Whitespace is
+          # normalized because these sentences wrap.
+          flat = re.sub(r'\s+', ' ', body)
+          for rule, key in (("severity must cite a basis", "Every severity must cite its basis"),
+                            ("scanner may raise but not lower", "can only ever raise a finding, not lower one"),
+                            ("CWE stays optional, not a severity source", "CWE is optional, and is classification")):
+              if key not in flat:                           errs.append(f"missing rule: {rule}")
           if errs:
               print("SKILL.md validation FAILED:"); [print("  -", e) for e in errs]; sys.exit(1)
-          print(f"SKILL.md valid: {len(nums)} dimensions, "
-                f"{len(SEVERITIES)} severity levels, body {len(body.strip())} chars")
+          print(f"SKILL.md valid: {len(nums)} dimensions, {len(SEVERITIES)} graded severities "
+                f"+ Informational, {len(BUCKETS)} output buckets, body {len(body.strip())} chars")
           PY
-      - name: Example review uses only defined severity labels
-        # The example is what most readers copy, so a stale label there propagates.
+      - name: Example review respects the buckets and defined labels
+        # The example is what most readers copy, so a stale label or a severity attached to a
+        # non-severity bucket propagates. Two checks: labels are defined, and severity appears
+        # ONLY in the Defects bucket -- rejection gates are binary and informational items
+        # carry no severity, so a label in either section is the drift this catches.
         run: |
           python3 - <<'PY'
           import re, sys
           skill = open("SKILL.md").read()
           example = open("examples/sample-review.md").read()
-          defined = {s.upper() for s in ("Critical", "High", "Medium", "Low", "Informational")
-                     if f"**{s}**" in skill}
-          used = set(re.findall(r'(?m)^###\s+\S+\s+([A-Z]+)\b', example))
+          # Severity labels the example may use = exactly the rows of SKILL.md's Defects table.
+          # Derived from SKILL.md rather than hardcoded, so renaming a level there fails here.
+          defined = {m.upper() for m in re.findall(r'(?m)^\|\s+\*\*(\w+)\*\*\s+\|', skill)}
+          errs = []
+          if not defined:
+              errs.append("no severity rows found in SKILL.md's table")
+
+          # Any all-caps token in a finding heading that looks like a severity claim.
+          used = {t for t in re.findall(r'(?m)^###[^\n]*?\b([A-Z]{3,})\b', example)
+                  if t not in ("FAIL", "PASS", "CWE", "README", "LLM", "AI", "TLS")}
           unknown = sorted(used - defined)
           if unknown:
-              print(f"example uses undefined severity label(s): {unknown}")
-              print(f"defined in SKILL.md: {sorted(defined)}")
-              sys.exit(1)
-          print(f"example severity labels OK: {sorted(used)}")
+              errs.append(f"undefined severity label(s) {unknown}; defined: {sorted(defined)}")
+
+          # Split on the bucket headings; a missing heading means the example no longer
+          # demonstrates the structure the skill mandates.
+          marks = [("gates", "## 1. Rejection gates"), ("defects", "## 2. Defects"),
+                   ("info", "## 3. Informational"), ("verdict", "## Verdict")]
+          idx = {}
+          for name, h in marks:
+              i = example.find(h)
+              if i < 0: errs.append(f"example missing section: {h}")
+              idx[name] = i
+          if all(v >= 0 for v in idx.values()):
+              def section(a, b): return example[idx[a]:idx[b]]
+              # Bucket-name mentions are legitimate; a *label* is an uppercase severity token.
+              graded = set(defined)
+              for name, nxt in (("gates", "defects"), ("info", "verdict")):
+                  body = section(name, nxt)
+                  # skip the heading line itself so "## 3. Informational" isn't a hit
+                  body = body.split("\n", 1)[1] if "\n" in body else ""
+                  bad = sorted({t for t in re.findall(r'\b([A-Z]{3,})\b', body)} & graded)
+                  if bad:
+                      errs.append(f"severity label(s) {bad} in the '{name}' bucket, which carries none")
+              d = section("defects", "info")
+              if not ({t for t in re.findall(r'\b([A-Z]{3,})\b', d)} & graded):
+                  errs.append("Defects bucket has no severity label at all")
+              if "Basis:" not in d:
+                  errs.append("Defects bucket cites no basis for its severities")
+          if errs:
+              print("example review FAILED:"); [print("  -", e) for e in errs]; sys.exit(1)
+          print(f"example OK: labels {sorted(used)}, buckets present and severity-scoped")
           PY

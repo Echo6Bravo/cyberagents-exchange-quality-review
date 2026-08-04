@@ -15,8 +15,9 @@ review with fewer round-trips.
 ## What it does
 
 Invoke it (e.g. "run a quality review", or `/cyberagents-exchange-quality-review`) and it works **19 dimensions**,
-ranked by customer impact, reporting findings most-severe-first with a concrete repro and fix,
-then an explicit **verdict** (ready, or the blocking items).
+ranked by customer impact, reporting findings in three buckets (rejection gates → defects →
+informational) with a concrete repro and fix, then an explicit **verdict** (ready, or the
+blocking items).
 
 **Core (1–12):** detection false-negatives; injection/XSS; messy-data robustness; scale;
 operational (exit codes / retry / determinism); version portability & TLS; schema/contract
@@ -37,12 +38,32 @@ real parser validates each file in isolation.
 Plus a **Tenable Exchange submission** section that mirrors the live contributing checklist
 (automated screening, listing requirements, listing↔repo congruence, outright-rejection gates).
 
-Every finding carries a **severity label** — Critical / High / Medium / Low / Informational —
-scored on consequence, not on effort to fix. Efficiency, cost, ergonomics, and style findings are
-**Informational by default** and never block, so an "your output is 70% boilerplate" note can't
-read like a credential leak; promoting one requires naming the consequence (a breached documented
-limit, a real resource exhausted at claimed scale, or volume that defeats review). CI enforces
-that the taxonomy stays defined and that the example review uses only defined labels.
+## How findings are reported
+
+Output lands in **three buckets**, which differ by *who decides and against what standard* — so a
+reviewer reads bucket 1 to decide accept/reject and can stop there, while a contributor reads
+buckets 2 and 3 to know what to fix.
+
+1. **Rejection gates** — taken verbatim from the live Exchange checklist (committed secrets,
+   weaponized behavior, no license, undisclosed egress, …). Binary, no severity: the checklist
+   says a detected credential is "an immediate rejection," so there is no *how bad*. Any failed
+   gate makes the verdict NOT READY on its own.
+2. **Defects** — real problems, labeled **Critical / High / Medium / Low**, scored on consequence
+   rather than effort to fix. Every severity must **cite its basis** (an Exchange checklist item,
+   a CodeQL `security-severity` score, a scanner rule and its rating, or the rubric row) — an
+   unsourced label is the failure mode this structure exists to prevent. A scanner's rating is
+   evidence that can **raise but never lower** a finding: `bandit` rates a hardcoded password
+   **LOW**, while the Exchange rejects that submission outright. A **CWE is optional** and is
+   *classification, not severity* — cite one where a real one fits, and say "no applicable CWE"
+   where none does, because a wrong-but-official-looking label misdirects triage.
+3. **Informational** — efficiency, cost, ergonomics, style. No severity, never blocking, so a
+   "70% of your output is boilerplate" note can't read like a credential leak. Promoting one into
+   Defects requires naming the consequence (a breached documented limit, a real resource exhausted
+   at claimed scale, or volume that defeats review).
+
+CI enforces that the three buckets exist in order, that the severity taxonomy and the
+cite-your-basis / raise-never-lower / CWE-is-optional rules stay stated, and that the example
+review keeps severity labels inside the Defects bucket only.
 
 For each dimension it **actually runs a probe** (adversarial input, a container, a scanner)
 rather than reasoning about it. It leans on a standard toolkit where available —
@@ -107,8 +128,11 @@ repo for them.
 
 This repo runs the same gates it recommends (dimensions 8, 11, 18): **gitleaks** full-history
 secret scan, **actionlint** on its own workflow, and a **SKILL.md structure check** (valid
-`name`/`description` frontmatter, substantive body, all 19 dimensions present, no leftover
-placeholders). See `.github/workflows/ci.yml`.
+`name`/`description` frontmatter, substantive body, all 19 dimensions present, the three output
+buckets in order, the severity rules stated, no leftover placeholders) plus a check that the
+example review obeys the bucket structure. Each check ships with a negative control — it was
+verified to *fail* when the thing it guards is removed, per the skill's own dimension 11.
+See `.github/workflows/ci.yml`.
 
 ## Known limitations
 
