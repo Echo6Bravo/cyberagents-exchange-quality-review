@@ -37,6 +37,13 @@ real parser validates each file in isolation.
 Plus a **Tenable Exchange submission** section that mirrors the live contributing checklist
 (automated screening, listing requirements, listing↔repo congruence, outright-rejection gates).
 
+Every finding carries a **severity label** — Critical / High / Medium / Low / Informational —
+scored on consequence, not on effort to fix. Efficiency, cost, ergonomics, and style findings are
+**Informational by default** and never block, so an "your output is 70% boilerplate" note can't
+read like a credential leak; promoting one requires naming the consequence (a breached documented
+limit, a real resource exhausted at claimed scale, or volume that defeats review). CI enforces
+that the taxonomy stays defined and that the example review uses only defined labels.
+
 For each dimension it **actually runs a probe** (adversarial input, a container, a scanner)
 rather than reasoning about it. It leans on a standard toolkit where available —
 **gitleaks** (full-history secret scan), **ruff** + **bandit** (Python lint/SAST),

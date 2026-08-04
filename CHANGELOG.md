@@ -31,7 +31,9 @@ All notable changes to this skill are documented here. The format follows
   - dim 4 — *fixed-text amplification*: measure bytes **per item at two scales**, not total
     bytes; flat bytes/item means boilerplate is being re-emitted per item instead of per group
     or per run. Includes the hoist-by-consequence rule (reference detail may move to a companion
-    file; irreversibility/cost/blast-radius warnings stay inline).
+    file; irreversibility/cost/blast-radius warnings stay inline) and the like-for-like
+    measurement caveat — the originating case measured 14% at 1k items and 48% at 50k, and the
+    growth with scale is the signal a single measurement cannot show.
   - dim 11 — *never weaken a security assertion to make a feature pass*: when a legitimate
     change trips a safety blocklist, replace the blanket ban with an exact allowlist that stays
     accounted for, rather than loosening the pattern.
@@ -39,11 +41,27 @@ All notable changes to this skill are documented here. The format follows
     (`account = i % 40`, `region = i % 4`) silently couple, so combination-dependent behavior is
     never exercised and measurements taken on them flatter the code.
 
+- **A defined severity taxonomy** — Critical / High / Medium / Low / Informational, scored on
+  *consequence* rather than effort to fix, with a table of what belongs at each level and which
+  levels block shipping. The skill previously said "most severe first" without ever defining the
+  levels, so nothing was labeled: an efficiency observation and a leaked credential both read as
+  "a finding." **Efficiency and other non-security findings are now Informational by default**
+  and never blocking; promoting one requires naming the consequence (a breached documented limit,
+  a real resource exhausted at the tool's claimed scale, or volume that defeats review). Dim 4
+  and dim 19 carry their own severity guidance, including that a *hard*-boundary scope span is
+  Critical while a *soft*-boundary one is Informational.
+
 ### Changed
 - Toolkit guidance on `bandit` B101: scope the skip to tests rather than repo-wide, and treat an
   `assert` in library/runtime code as a finding — `python -O` strips it, so an assert-protected
   invariant is unenforced in exactly the optimized build where violating it does damage.
-- CI structure check and README now assert **19** dimensions.
+  (Verified: `python3 -O` returns `-5` from a function whose `assert x > 0` should have rejected it.)
+- CI structure check and README now assert **19** dimensions, that all five severity levels stay
+  defined, and that `examples/sample-review.md` uses only defined labels.
+- `examples/sample-review.md` re-labeled to the taxonomy. It previously used ad-hoc
+  `BLOCKING`/🟠/🟡 markers whose verdict text disagreed with them (two 🟠 items were called
+  "medium", 🟡 "low"). Now includes an Informational example so the non-blocking case is
+  demonstrated rather than only described.
 
 ## [1.0.0] — 2026-08-03
 
