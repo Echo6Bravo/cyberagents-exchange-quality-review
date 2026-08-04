@@ -5,9 +5,9 @@ description: >-
   especially those bound for the Tenable CyberAgents Exchange. Systematically hunts the
   failure classes that hurt a customer — detection false-negatives, injection/XSS, messy-data
   robustness, scale limits, operational behavior, version portability, schema drift, leaked
-  secrets (full git history), malicious/offensive behavior, undisclosed outbound calls, and
-  LLM/AI-specific risks — and reports findings ranked by severity BEFORE any public/Exchange
-  push. Runs a standard toolkit (gitleaks, ruff, bandit, shellcheck, actionlint, CodeQL) and
+  secrets (full git history), malicious/offensive behavior, undisclosed outbound calls,
+  LLM/AI-specific risks, and execution-scope correctness in generated artifacts — and reports
+  findings ranked by severity BEFORE any public/Exchange push. Runs a standard toolkit (gitleaks, ruff, bandit, shellcheck, actionlint, CodeQL) and
   mirrors the live Exchange reviewer checklist. Use before shipping, submitting, or when asked
   "is this enterprise-ready / did we miss anything?".
 ---
@@ -74,8 +74,12 @@ never a silent skip and never a reason to overstate what was checked.
 Run whatever of these the language/stack supports; treat findings as input to the relevant
 dimension, not a substitute for it. Install only with the user's approval (`bash setup.sh`).
 - **Secrets:** `gitleaks git --no-banner --redact .` over **full history** (fetch-depth 0 in CI).
-- **Python lint/SAST:** `ruff check .` and `bandit -r . --skip B101` (B101=asserts are usually
-  intentional dev-time checks — skip with a documented reason, don't rewrite working asserts).
+- **Python lint/SAST:** `ruff check .` and `bandit -r .`. B101 (assert) is commonly skipped
+  because asserts in *tests* are intentional — scope the skip to tests rather than suppressing
+  it repo-wide. In library/runtime code an `assert` is **not** a guard: `python -O` strips it,
+  so an assert-protected invariant is unenforced in exactly the optimized build where violating
+  it does damage. Any assert that validates external input or protects a security decision is a
+  finding; raise a real exception instead.
 - **Shell:** `shellcheck -S warning` on every `*.sh`.
 - **GitHub Actions:** `actionlint` on every workflow (catches invalid inputs before a failed run).
 - **Deep SAST:** **CodeQL** — best run as a GitHub Actions workflow (`github/codeql-action`,
@@ -139,6 +143,20 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    streaming) is frequently a *separate* path from the small-input path the tests exercise — so
    it can be entirely broken while every test is green. Exercise the scale path itself (e.g. a
    small budget/chunk size that *forces* chunking), not just a big input through the small path.
+   - **Fixed-text amplification — measure bytes *per item*, at two scales, not total bytes.**
+     For anything that emits per-item output (reports, remediation scripts, IaC, findings
+     files), the dominant cost is often not the item but the boilerplate around it: a header,
+     an explanation, a caveat paragraph re-emitted once per item instead of once per group or
+     once per run. Render at two sizes (e.g. 1k and 10k items) and compare **bytes/item**. If
+     it stays flat, fixed text dominates and output is needlessly linear in items × prose; if
+     it falls, shared text is being amortized. Real case: 85% of a generator's output was
+     comments, with a per-policy block emitted once per *resource* — 587 times for 5 distinct
+     policies — and a how-to header repeated in all 159 files. Hoisting run-level text to a
+     companion README and grouping per policy cut bytes/item 45% at 1k and 67% at 50k.
+     **Hoist by consequence, not by length:** reference detail (summary, prerequisites, docs
+     links) can move to a companion file, but anything a reader must see *before acting* —
+     irreversibility, cost, blast radius — stays inline next to the thing it warns about. A
+     warning in a sibling file is a warning that gets skipped.
 
 5. **Operational.** Exit codes a scheduler can branch on; partial-failure tolerance (one unit
    fails → flag the gap, don't lose everything); API retry/backoff on 429/5xx; determinism/
@@ -193,6 +211,24 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     encode the author's *assumptions* about the real system's shape — the exact place silent bugs
     hide; require at least one exercise against the real system (or a captured real response),
     especially for anything that queries an external schema/API.
+    **Never weaken a security assertion to make a new feature pass.** When a legitimate change
+    trips a safety test — a blocklist of dangerous substrings, a "no shell metacharacters"
+    check, an allowed-domains assertion — the test firing is the test *working*. Deleting the
+    pattern, loosening the regex, or adding a broad exception permanently blinds it to the
+    attack it existed to catch. Replace the blanket ban with an **exact allowlist that stays
+    accounted for**: assert the dangerous construct appears only in its known-good form and
+    only as many times as expected, so any *new* occurrence still fails. Real case: adding an
+    account-preflight guard introduced a legitimate `$(...)` command substitution and tripped
+    an injection test; the fix was to drop `"$("` from the blocklist but assert
+    `text.count("$(") == text.count(<the one approved line>)` — so a second substitution, from
+    any source, breaks the build. Review every diff that edits a test's list of forbidden
+    things and ask which attack just stopped being covered.
+    **Check fixtures for correlated axes.** Synthetic data generated from one loop counter
+    (`account = i % 40`, `region = i % 4`) silently couples the axes — here every account gets
+    exactly one region — so any behavior that depends on their *combination* (grouping,
+    splitting, per-scope file counts, join fan-out) is never exercised, and measurements taken
+    on it are wrong in the flattering direction. Vary each axis independently and confirm the
+    generated set actually contains the combinations the code branches on.
 
 12. **Docs.** README/SKILL state what it does, prerequisites, how to run, outputs, limits, and
     any fidelity/coverage caveats — accurately (no overclaiming; e.g. "reduced fidelity" stays
@@ -239,6 +275,41 @@ frequently the highest-impact dimensions — not optional add-ons.
     pinned to immutable versions/digests, with SRI on CDN `<script>`/`<link>`. No moving tags
     (`@main`), no runtime `docker pull` of unverified images, no imports undeclared in the
     manifest, `npm ci` (not `npm install`) in CI.
+
+### Generated-artifact dimensions (apply when the tool EMITS something a human or CI then runs)
+Applies to generated remediation scripts, IaC, SQL, playbooks, or config — anything the tool
+writes for later execution. The artifact, not just the generator, is the deliverable, so it
+carries its own failure modes. Skip with a note if the tool only reports and never emits.
+
+19. **Execution-scope correctness — does each artifact match the authority it will run under?**
+    An emitted artifact runs under credentials and a scope the *generator never sees*. Identify
+    the scope its tooling can actually address in one invocation — one cloud account, one
+    region, one tenant, one cluster, one database — and confirm no single artifact spans more
+    than that. **The failure to hunt is not an error, it's a wrong success:** an identifier that
+    exists in more than one scope resolves against whichever scope the runner is authenticated
+    to. Real case: Terraform/OpenTofu `import` blocks for two AWS accounts in one file, where
+    the provider is scoped to one account and region — a same-named DynamoDB table in the wrong
+    account would be adopted and reconfigured, silently, with the plan reporting success.
+    Distinguish **hard** boundaries (the tooling cannot cross them: an AWS provider's
+    account+region, a DB connection's schema) from **soft** ones (a CLI that carries `--region`
+    per command can span regions). Splitting on a hard boundary is a *correctness* requirement,
+    not tidiness — so it needs a test asserting no artifact ever spans one, at the smallest
+    input size where it could (two items), and not defeated by a `--no-split`/size-limit flag.
+    - **Fail closed on a scope mismatch.** The artifact should refuse to run against the wrong
+      scope rather than trust its filename. Prefer a self-check the runner cannot skip — an
+      identity preflight that exits non-zero (`aws sts get-caller-identity` compared to the
+      expected account), a provider-level guard (`allowed_account_ids`), a `USE <db>` assertion.
+      Pick one that needs no privilege beyond being authenticated, so it can't fail closed on a
+      legitimate operator. State the required scope *in the artifact*, not only in the docs.
+    - **Placeholders must be visibly unfinished.** Where the generator cannot know a required
+      value, a type-valid stub that lets validation pass is fine *only* if it is marked (`TODO`)
+      and counted, and the artifact says the value is not real. A plausible-looking default is
+      the worst outcome here: it validates, applies, and reconfigures the resource wrongly.
+    - **Prove it with the real parser, not substring assertions.** Run the actual toolchain over
+      each emitted file in isolation (`tofu init -backend=false && tofu validate`, `bash -n`,
+      `sqlfluff`/`EXPLAIN`, `--dry-run`) — per file, in its own workspace, so a file that only
+      validates alongside its siblings is caught. Substring checks pass on artifacts real
+      parsers reject; this dimension is where "prefer proof over assertion" pays most.
 
 ## Output
 
