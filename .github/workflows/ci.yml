@@ -84,7 +84,30 @@ jobs:
           nums = set(int(n) for n in re.findall(r'(?m)^(\d+)\.\s+\*\*', body))
           missing = [n for n in range(1, 20) if n not in nums]
           if missing:                                       errs.append(f"missing dimension(s): {missing}")
+          # The severity taxonomy must stay defined -- an unlabeled review makes an
+          # efficiency note read like a credential leak, which is what it exists to prevent.
+          SEVERITIES = ("Critical", "High", "Medium", "Low", "Informational")
+          absent = [s for s in SEVERITIES if f"**{s}**" not in body]
+          if absent:                                        errs.append(f"severity level(s) not defined: {absent}")
           if errs:
               print("SKILL.md validation FAILED:"); [print("  -", e) for e in errs]; sys.exit(1)
-          print(f"SKILL.md valid: {len(nums)} dimensions, body {len(body.strip())} chars")
+          print(f"SKILL.md valid: {len(nums)} dimensions, "
+                f"{len(SEVERITIES)} severity levels, body {len(body.strip())} chars")
+          PY
+      - name: Example review uses only defined severity labels
+        # The example is what most readers copy, so a stale label there propagates.
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          skill = open("SKILL.md").read()
+          example = open("examples/sample-review.md").read()
+          defined = {s.upper() for s in ("Critical", "High", "Medium", "Low", "Informational")
+                     if f"**{s}**" in skill}
+          used = set(re.findall(r'(?m)^###\s+\S+\s+([A-Z]+)\b', example))
+          unknown = sorted(used - defined)
+          if unknown:
+              print(f"example uses undefined severity label(s): {unknown}")
+              print(f"defined in SKILL.md: {sorted(defined)}")
+              sys.exit(1)
+          print(f"example severity labels OK: {sorted(used)}")
           PY
