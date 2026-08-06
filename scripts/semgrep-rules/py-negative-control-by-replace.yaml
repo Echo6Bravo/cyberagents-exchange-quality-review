@@ -1,0 +1,99 @@
+# Dimension 11 (tests & CI), negative-control validity. No applicable CWE.
+#
+# WHY THIS EXISTS, and why it is NOT the same rule as tautology-scan.sh. Twelve negative-control
+# tests in real code built their "invalid" input by calling `str.replace(old, new)` on a known-good
+# string. When `old` is not present, `str.replace` is a SILENT NO-OP -- it returns the original
+# unchanged, no exception, no warning. The test then hands the checker a perfectly VALID value and
+# asserts it is rejected. So the test passes ONLY IF THE CHECKER IS BROKEN, and it starts failing
+# the moment someone fixes the checker. That is the exact inversion of what a negative control is
+# for, and it is mechanically distinct from the `assert X or not Y` tautology that
+# `tautology-scan.sh` finds: a tautology CANNOT fail, whereas this one can and does -- for the
+# opposite of the intended reason. Different failure mode, different fix, so a different rule.
+#
+# The fix is one line: `assert old in text` before the replace (or construct the mutant explicitly).
+# The rule accepts exactly that, which is why the assertion-first form below does not fire.
+#
+# The same reasoning covers two neighbours, one matched and one not:
+#   * `re.sub(pattern, repl, s)` with a non-matching pattern -- MATCHED here, same silent no-op.
+#   * `dict.get(k, default)` used to build a fixture, where a missing key yields the default and the
+#     "mutant" is whatever the default was. NOT matched: it has far too many legitimate uses to rule
+#     on. Dimension 11's prose question.
+#
+# The general lesson, which bit the development of this very ruleset: a fixture built by
+# string-splitting on a delimiter that occurs in the data is a silently wrong fixture, and a
+# mutation harness that fails for the wrong reason is indistinguishable from one that works.
+#
+# WHY NO `paths:` FILTER, though this is a test-only defect. Two measured reasons. First, the
+# pattern SELF-SCOPES: `assert not ...` / `with pytest.raises(...)` are test constructs, and this
+# rule scored 0 findings on a production-source probe containing both a benign and a no-op
+# `.replace()`. Second, `paths: include` would BREAK Gate 5: a direct scan of this fixture reports
+# `scanned: 0, findings: 0, errors: 0` -- a silent zero -- because the fixture's basename does not
+# match a `*test*.py` glob. Adding a path filter here therefore buys nothing and disables the
+# mutation gate that proves the rule works.
+#
+# KNOWN FALSE POSITIVES (measured -- triage by reading; locked to the fixture lines below):
+#   * a needle that is present but only obviously so to a human (a substring of a constant defined
+#     in another module). The replace does mutate; the test is fine. Confirm and move on.
+#   * a presence guard written some other way -- `if old not in text: raise`, a helper like
+#     `mutate(text, old, new)` that asserts internally, or a parametrized fixture that guarantees
+#     it. Only the literal `assert "..." in $S` spelling is recognized.
+#
+# KNOWN BLIND SPOTS:
+#   * a needle the engine cannot resolve to a literal -- a function parameter, or a computed
+#     expression like `"prov" + suffix`. Both measured MISSED. A needle assigned from a literal one
+#     line earlier IS caught, via semgrep's constant propagation; that was first written down here
+#     as a blind spot and the fixture proved otherwise, so the distinction is measured, not assumed.
+#   * a mutant built by `.split()`, slicing, or index arithmetic -- the split case is the one that
+#     bit this workstream and it is not matched. Prose, per above.
+#   * the mutant flowing into the assertion through an intermediate variable or a helper call.
+rules:
+  - id: py-negative-control-by-replace
+    languages: [python]
+    severity: WARNING
+    message: >-
+      dim11: this negative control builds its "invalid" input with a no-op-capable string mutation.
+      `str.replace`/`re.sub` return the ORIGINAL string unchanged when the needle is absent -- no
+      error -- so if that literal is not present, the test asserts that a VALID value is rejected.
+      It then passes only while the checker is broken, and fails when the checker is fixed. Add
+      `assert <needle> in <source>` before the mutation, or construct the invalid value explicitly.
+      Verify by reverting the fix this test guards and confirming the test FAILS (dimension 11).
+    metadata:
+      qr-dimension: 11
+      cwe: "no applicable CWE -- invalid test control, not a vulnerability class"
+      confidence: MEDIUM
+    patterns:
+      # Both mutation spellings, against both rejection spellings. The `assert not` and
+      # `pytest.raises` forms are listed separately rather than as one loose pattern because a
+      # single `...` between the mutation and an arbitrary statement matched the guarded case too.
+      - pattern-either:
+          - pattern: |
+              $BAD = $S.replace("...", "...")
+              ...
+              assert not $F(...)
+          - pattern: |
+              $BAD = re.sub("...", "...", $S)
+              ...
+              assert not $F(...)
+          - pattern: |
+              $BAD = $S.replace("...", "...")
+              ...
+              with pytest.raises(...):
+                  ...
+          - pattern: |
+              $BAD = re.sub("...", "...", $S)
+              ...
+              with pytest.raises(...):
+                  ...
+      # The fix, and the only recognized spelling of it. NOTE: `pattern-not` does NOT work here --
+      # measured, the guarded case still fired -- because the match range is the mutation-plus-
+      # assertion pair, not the wider block that includes the presence assert. Use -inside.
+      - pattern-not-inside: |
+          assert "..." in $S
+          ...
+          $BAD = $S.replace("...", "...")
+          ...
+      - pattern-not-inside: |
+          assert "..." in $S
+          ...
+          $BAD = re.sub("...", "...", $S)
+          ...
