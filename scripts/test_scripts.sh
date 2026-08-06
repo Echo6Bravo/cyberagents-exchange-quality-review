@@ -115,6 +115,59 @@ rm -rf "$W"
 # H -- usage surface, matching the other scanners.
 "$TS" --help >/dev/null 2>&1; chk $? 0 "--help -> rc0"
 
+echo "== field-coverage-scan.sh =="
+FC="$HERE/field-coverage-scan.sh"
+# A -- must-catch: two string fields declared, only one fed a payload. This is the shipped-defect
+# shape in miniature -- a thorough payload set applied to ONE field.
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src" "$W/tests"
+printf 'class Finding:\n    resource_id: str\n    account_id: str\n' > "$W/src/model.py"
+printf 'UNSAFE_VALUES = ["a; rm -rf /"]\n\n\ndef test_x(value):\n    validate(value, field_name="resource_id")\n' > "$W/tests/test_m.py"
+out=$("$FC" "$W" 2>&1); chk $? 1 "flags a field with no hostile payload (rc=1)"
+chk "$(cnt "$out" 'no-hostile-payload')" 1 "exactly the 1 uncovered field"
+printf '%s\n' "$out" | grep -q '^account_id' \
+  && { echo "  [PASS] names the uncovered field"; pass=$((pass+1)); } \
+  || { echo "  [FAIL] names the uncovered field"; fail=$((fail+1)); }
+rm -rf "$W"
+# B -- must-not-catch: every declared field named in a hostile test. Separate dir, same reasoning as
+# the tautology negative control.
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src" "$W/tests"
+printf 'class Finding:\n    resource_id: str\n' > "$W/src/model.py"
+printf 'UNSAFE_VALUES = ["a; rm -rf /"]\n\n\ndef test_x(value):\n    validate(value, field_name="resource_id")\n' > "$W/tests/test_m.py"
+"$FC" "$W" >/dev/null 2>&1; chk $? 0 "fully covered -> rc0"
+rm -rf "$W"
+# C -- the string-type restriction, which is what makes the output readable. A non-string field is
+# NOT reported: measured, dropping this restriction took a real 47-file repo from 42 questions to
+# 149, and the extra 107 were ints/bools/enums/datetimes no payload can target. This test locks
+# that decision in place -- and documents the accompanying blind spot as a tested fact.
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src" "$W/tests"
+printf 'class Finding:\n    resource_id: str\n    retry_count: int\n    enabled: bool\n' > "$W/src/model.py"
+printf 'UNSAFE_VALUES = ["a; rm -rf /"]\n\n\ndef test_x(value):\n    validate(value, field_name="resource_id")\n' > "$W/tests/test_m.py"
+"$FC" "$W" >/dev/null 2>&1; chk $? 0 "non-string fields are not counted (known blind spot)"
+rm -rf "$W"
+# D -- refuses to pass when there is nothing to compare. Both halves matter: an empty SET A and an
+# empty SET B are meaningless in OPPOSITE directions, and either would otherwise print as a
+# confident zero -- the silent-zero shape this kit exists to catch, in our own probe.
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src"
+printf 'def f():\n    return 1\n' > "$W/src/plain.py"
+"$FC" "$W" >/dev/null 2>&1; chk $? 2 "no declared fields -> rc2, NOT a pass"
+rm -rf "$W"
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src" "$W/tests"
+printf 'class Finding:\n    resource_id: str\n' > "$W/src/model.py"
+printf 'def test_ok():\n    assert validate("safe-id")\n' > "$W/tests/test_m.py"
+"$FC" "$W" >/dev/null 2>&1; chk $? 1 "fields but NO hostile tests -> rc1, the finding"
+rm -rf "$W"
+# E -- documented false positive: a bare `name = "x"` must NOT register as coverage. An earlier
+# version matched it and invented a covered field called `x`; a probe that fabricates coverage turns
+# a gap into a pass, so this stays locked by a test.
+W=$(mktemp -d "${TMPDIR:-/tmp}/fcs.XXXXXX"); mkdir -p "$W/src" "$W/tests"
+printf 'class Finding:\n    resource_id: str\n' > "$W/src/model.py"
+printf 'UNSAFE_VALUES = ["a; rm -rf /"]\nname = "resource_id"\n\n\ndef test_x(value):\n    validate(value)\n' > "$W/tests/test_m.py"
+"$FC" "$W" >/dev/null 2>&1; chk $? 1 "bare name= does not count as coverage"
+rm -rf "$W"
+# F -- usage surface, matching the other scanners.
+"$FC" --help >/dev/null 2>&1; chk $? 0 "--help -> rc0"
+"$FC" /nonexistent-path-xyz >/dev/null 2>&1; chk $? 2 "missing path -> rc2"
+
 echo "== setup.sh --check =="
 SETUP="$HERE/../setup.sh"
 # Every tool in TOOLS must appear in the report. Four hand-maintained lists used to have to agree;
@@ -237,14 +290,19 @@ print(sum(len(v.get("checks") or {}) for v in (d.get("results") or {}).values())
   # weight -- and that a rule can't be quietly narrowed to zero coverage while CI stays green.
   W=$(mktemp -d "${TMPDIR:-/tmp}/sgb.XXXXXX")
   cp "$RULES"/* "$W/" 2>/dev/null
-  first_yaml=$(find "$W" -maxdepth 1 -name '*.yaml' | head -1)
-  # Narrow every key regex so it can never match, without breaking the YAML. Assert the edit landed
-  # before asserting anything about it: a no-op mutation would make both checks below pass for the
-  # wrong reason (this exact trap already bit the tautology mutations once).
-  perl -pi -e 's/^(\s*regex:).*/$1 zzz_never_matches_zzz/' "$first_yaml"
-  grep -q 'zzz_never_matches_zzz' "$first_yaml" \
-    && { echo "  [PASS] gate4c: mutation landed"; pass=$((pass+1)); } \
-    || { echo "  [FAIL] gate4c: mutation was a no-op -- checks below prove nothing"; fail=$((fail+1)); }
+  # Retarget every rule at a language its fixture is not written in. This keeps the YAML perfectly
+  # valid while guaranteeing the rule can no longer match -- and unlike the earlier version, which
+  # rewrote every `regex:` line, it does NOT assume anything about rule SHAPE. That mattered
+  # immediately: the second rule authored here has no `regex:` at all, so the old mutation became a
+  # silent no-op the moment it sorted first. The landing assertion below is what caught that, which
+  # is the whole argument for asserting the mutation landed before believing anything downstream.
+  perl -pi -e 's/^(\s*)languages: .*$/$1languages: [generic]/' "$W"/*.yaml
+  if grep -lq 'languages: \[generic\]' "$W"/*.yaml >/dev/null 2>&1 \
+     && ! grep -q 'languages: \[python\]' "$W"/*.yaml; then
+    echo "  [PASS] gate4c: mutation landed"; pass=$((pass+1))
+  else
+    echo "  [FAIL] gate4c: mutation was a no-op -- checks below prove nothing"; fail=$((fail+1))
+  fi
   chk "$(gate3 "$W")" "valid" "gate4c: rule is still VALID (gate3 cannot see this)"
   g4c=$(gate1 "$W"); chk "$([ "$g4c" = "OK" ] && echo OK || echo caught)" "caught" "gate4c: gate1 catches a rule narrowed to zero matches ($g4c)"
   rm -rf "$W"
@@ -297,7 +355,9 @@ ts-token-in-localstorage${TAB}\"apiKey\"${TAB}\"pageSize\"
 ts-token-in-localstorage${TAB}\"user_password\"${TAB}\"userNickname\"
 ts-token-in-localstorage${TAB}\"REFRESH_TOKEN\"${TAB}\"LAST_ROUTE\"
 ts-token-in-localstorage${TAB}localStorage[\"bearer\"]${TAB}localStorage[\"layout\"]
-ts-token-in-localstorage${TAB}{ authToken: accessToken }${TAB}{ sidebarWidth: 240 }"
+ts-token-in-localstorage${TAB}{ authToken: accessToken }${TAB}{ sidebarWidth: 240 }
+py-path-write-without-containment${TAB}target.write_text(VULN_TEXT)${TAB}(Path(out_dir) / \"fixed.tf\").write_text(VULN_TEXT)
+py-path-write-without-containment${TAB}target.write_bytes(VULN_BYTES)${TAB}(Path(out_dir) / \"fixed.zip\").write_bytes(VULN_BYTES)"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)"
