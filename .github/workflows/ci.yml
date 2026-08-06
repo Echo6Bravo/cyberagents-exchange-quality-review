@@ -44,10 +44,29 @@ jobs:
         run: |
           sudo apt-get -qq update && sudo apt-get -qq install -y shellcheck
           shellcheck -S warning scripts/*.sh
+      - name: Install semgrep (pinned)
+        # Pinned to an exact version, not a range: dimension 18 asks the same of every submission,
+        # and the rule gates were measured against this engine. A floating install would silently
+        # test a different analyzer than the one the gates were written against.
+        run: pip install --quiet semgrep==1.172.0
       - name: Run helper-script tests
-        # The skill preaches "prove your regression tests are real guards" (dim 11), so its own
-        # shipped tools (mutation-check, empty-relationship-scan) are tested and gated here.
-        run: bash scripts/test_scripts.sh
+        # The skill preaches "prove your regression tests are real guards" (dim 11), so every tool
+        # it ships in scripts/ is tested and gated here. Register new scanners in test_scripts.sh --
+        # this step and the shellcheck glob above both pick them up with no workflow change.
+        #
+        # The semgrep rule gates SKIP when semgrep is absent -- correct locally, where the tool is
+        # optional, but wrong here: a failed install would silently drop every rule gate and this
+        # job would still exit 0. So the output is asserted, not just the exit code.
+        run: |
+          # pipefail is MANDATORY here: the default GitHub shell is `bash -e`, so `script | tee`
+          # would return tee's status and a failing test suite would pass this step silently.
+          set -o pipefail
+          bash scripts/test_scripts.sh | tee /tmp/helper-tests.log
+          if grep -q 'SKIP.*semgrep' /tmp/helper-tests.log; then
+            echo "::error::semgrep rule gates were SKIPPED -- the install did not take effect"; exit 1
+          fi
+          grep -q 'gate5-self' /tmp/helper-tests.log \
+            || { echo "::error::gate5 self-check never ran"; exit 1; }
 
   skill-structure:
     name: SKILL.md structure (Exchange-loadable)

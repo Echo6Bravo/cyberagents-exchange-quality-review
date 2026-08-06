@@ -149,6 +149,244 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   rm -rf "$W"
 fi
 
+echo "== semgrep rules =="
+# semgrep is OPTIONAL. Skip only this section if it's absent -- do NOT use need(), which exits 0
+# and would silently drop every test above it too.
+RULES="$HERE/semgrep-rules"
+if ! command -v semgrep >/dev/null 2>&1; then
+  echo "  [SKIP] semgrep not installed -- rule gates not run (coverage gap, not a pass)"
+elif [ ! -d "$RULES" ]; then
+  echo "  [SKIP] $RULES absent -- no rules to gate"
+else
+  # NOTE: `--metrics=off --disable-version-check` are scan-only -- `semgrep test`/`validate` REJECT
+  # them, so they appear only on the `semgrep scan` calls further down (where omitting them costs
+  # ~90s per invocation on a network that blackholes the update check).
+
+  # ---- Gate 1: every rule is exercised by a passing fixture. -------------------------------
+  # This is the gate that matters most, because `semgrep test` EXITS 0 when it finds no fixtures
+  # at all ("No unit tests found") -- for a valid OR a broken rule. So a rule committed without
+  # its sibling fixture tests nothing and CI stays green. Measured, not assumed: with no fixture,
+  # config_missing_tests lists the rule and results is empty. Read the JSON, never the exit code.
+  # Empty stdout is meaningful, not an error to swallow: on a broken config `semgrep test --json`
+  # prints NOTHING to stdout (rc=7, message on stderr). It's reported distinctly from malformed
+  # JSON so a genuine tooling failure can never be mistaken for a defect the gate "caught".
+  gate1(){ # $1 = rules dir; echoes "OK" or a reason; never trusts rc
+    semgrep test --json "$1" 2>/dev/null | python3 -c '
+import json,sys
+raw=sys.stdin.read()
+if not raw.strip(): print("no JSON output -- semgrep rejected the config outright"); sys.exit(0)
+try: d=json.loads(raw)
+except Exception as e: print("unparseable JSON from semgrep test: %s" % e); sys.exit(0)
+miss=d.get("config_missing_tests") or []
+errs=d.get("config_with_errors") or []
+res=d.get("results") or {}
+if miss: print("rule(s) with NO fixture: %s" % [m.split("/")[-1] for m in miss]); sys.exit(0)
+if errs: print("rule file(s) with errors: %s" % [e.split("/")[-1] for e in errs]); sys.exit(0)
+if not res: print("no rules were tested at all (empty results)"); sys.exit(0)
+bad=[rid for cfg,v in res.items() for rid,c in (v.get("checks") or {}).items() if not c.get("passed")]
+if bad: print("check(s) failed: %s" % bad); sys.exit(0)
+print("OK")
+'; }
+  g1=$(gate1 "$RULES"); chk "$g1" "OK" "gate1: every rule has a fixture and passes ($g1)"
+
+  # ---- Gate 2: rule id matches its filename, and every .yaml is accounted for. --------------
+  # Catches a rule whose id drifts from its basename -- the pair would still "pass" while the
+  # fixture silently tested a differently-named rule.
+  yaml_n=$(find "$RULES" -maxdepth 1 -name '*.yaml' | wc -l | tr -d ' ')
+  checked_n=$(semgrep test --json "$RULES" 2>/dev/null | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(0); sys.exit(0)
+print(sum(len(v.get("checks") or {}) for v in (d.get("results") or {}).values()))')
+  chk "$checked_n" "$yaml_n" "gate2: all $yaml_n rule file(s) exercised (checked=$checked_n)"
+  mismatch=""
+  for y in "$RULES"/*.yaml; do
+    b=$(basename "$y" .yaml)
+    grep -qE "^[[:space:]]*-[[:space:]]*id:[[:space:]]*${b}[[:space:]]*\$" "$y" || mismatch="$mismatch $b"
+  done
+  chk "${mismatch:-none}" "none" "gate2b: rule id == filename (mismatched:${mismatch:-none})"
+
+  # ---- Gate 3: the config is valid. --------------------------------------------------------
+  # MUST grep the OUTPUT TEXT. `semgrep validate` exits 0 even when it reports
+  # "Configuration is invalid" (measured). Do NOT "simplify" this to chk $? 0 -- that silently
+  # disables the gate, which is this file's own dimension-1 exposure.
+  gate3(){ semgrep validate "$1" 2>&1 | grep -q 'Configuration is valid' && echo "valid" || echo "invalid"; }
+  chk "$(gate3 "$RULES")" "valid" "gate3: semgrep validate reports valid (text, not rc)"
+
+  # ---- Gate 4: prove Gates 1 and 3 actually FIRE. -------------------------------------------
+  # Without this the gates are decorative. Two independent breakages, each on a throwaway copy:
+  # (a) the documented unquoted-colon gotcha -> invalid config; (b) a rule with no fixture, which
+  # is the silent-zero shape `semgrep test`'s exit code misses entirely.
+  W=$(mktemp -d "${TMPDIR:-/tmp}/sgb.XXXXXX")
+  cp "$RULES"/* "$W/" 2>/dev/null
+  first_yaml=$(find "$W" -maxdepth 1 -name '*.yaml' | head -1)
+  # (a) break the YAML the exact way the rule headers warn about: an unquoted colon in a pattern.
+  printf '      - pattern: broken.call({..., $K: $V, ...})\n' >> "$first_yaml"
+  chk "$(gate3 "$W")" "invalid" "gate4a: gate3 FAILS on the unquoted-colon gotcha"
+  g4a=$(gate1 "$W"); chk "$([ "$g4a" = "OK" ] && echo OK || echo caught)" "caught" "gate4a: gate1 FAILS on a broken rule ($g4a)"
+  rm -rf "$W"
+  # (b) a valid rule with its fixture deleted -- `semgrep test` exits 0 here, so only Gate 1 sees it.
+  W=$(mktemp -d "${TMPDIR:-/tmp}/sgb.XXXXXX")
+  cp "$RULES"/*.yaml "$W/" 2>/dev/null
+  semgrep test "$W" >/dev/null 2>&1
+  chk $? 0 "gate4b: semgrep test EXITS 0 with no fixtures (the silent zero)"
+  g4b=$(gate1 "$W"); chk "$([ "$g4b" = "OK" ] && echo OK || echo caught)" "caught" "gate4b: gate1 catches the missing fixture ($g4b)"
+  rm -rf "$W"
+  # (c) the most realistic regression: a rule that stays perfectly VALID but no longer matches its
+  # fixture. Gate 3 is blind to this by design (the YAML is fine), so it proves Gate 1 carries the
+  # weight -- and that a rule can't be quietly narrowed to zero coverage while CI stays green.
+  W=$(mktemp -d "${TMPDIR:-/tmp}/sgb.XXXXXX")
+  cp "$RULES"/* "$W/" 2>/dev/null
+  first_yaml=$(find "$W" -maxdepth 1 -name '*.yaml' | head -1)
+  # Narrow every key regex so it can never match, without breaking the YAML. Assert the edit landed
+  # before asserting anything about it: a no-op mutation would make both checks below pass for the
+  # wrong reason (this exact trap already bit the tautology mutations once).
+  perl -pi -e 's/^(\s*regex:).*/$1 zzz_never_matches_zzz/' "$first_yaml"
+  grep -q 'zzz_never_matches_zzz' "$first_yaml" \
+    && { echo "  [PASS] gate4c: mutation landed"; pass=$((pass+1)); } \
+    || { echo "  [FAIL] gate4c: mutation was a no-op -- checks below prove nothing"; fail=$((fail+1)); }
+  chk "$(gate3 "$W")" "valid" "gate4c: rule is still VALID (gate3 cannot see this)"
+  g4c=$(gate1 "$W"); chk "$([ "$g4c" = "OK" ] && echo OK || echo caught)" "caught" "gate4c: gate1 catches a rule narrowed to zero matches ($g4c)"
+  rm -rf "$W"
+
+  # ---- Gate 5: rule mutation loop -- prove each rule keys on the DEFECT, not the file. -------
+  # Dimension 11 turned on the rules themselves. mutation-check.sh cannot do this job: it mutates
+  # SOURCE and expects a test command's exit code to flip. Here the mutation target is the FIXTURE,
+  # and the signal is which lines still match.
+  #
+  # Two measured facts shape the assertion. Do NOT "simplify" either away:
+  #   * The exit code is not a signal. A fixture holds MANY findings, so neutralizing one leaves the
+  #     rest and `--error` still exits 1. (Measured: broken config -> rc=7; missing target -> rc=2;
+  #     findings without `--error` -> rc=0.) So the assertion is on the LINE SET.
+  #   * An UNPARSEABLE fixture reports 0 findings, 0 errors, rc=0, and claims the file was scanned
+  #     -- indistinguishable from "defect removed" if you only count findings. So every scan also
+  #     asserts a nonzero scanned count and zero errors before its line set is believed.
+  scan_lines(){ # $1=rule $2=target -> "<lines>|<scanned>|<errors>"
+    semgrep scan --config "$1" --metrics=off --disable-version-check --json "$2" 2>/dev/null \
+    | python3 -c '
+import json,sys
+raw=sys.stdin.read()
+if not raw.strip(): print("|0|1"); sys.exit(0)
+try: d=json.loads(raw)
+except Exception: print("|0|1"); sys.exit(0)
+ls=sorted(r["start"]["line"] for r in (d.get("results") or []))
+p=d.get("paths") or {}
+print("%s|%d|%d" % (" ".join(str(x) for x in ls), len(p.get("scanned") or []), len(d.get("errors") or [])))
+'; }
+  # $1=baseline line set, $2=scan_lines output, $3=expected delta (one|same) -> "OK" or a reason.
+  mut_verdict(){
+    BASE="$1" GOT="$2" WANT="$3" python3 -c '
+import os
+base=set(os.environ["BASE"].split())
+lines,scanned,errors=os.environ["GOT"].split("|")
+want=os.environ["WANT"]
+mut=set(lines.split())
+if int(scanned)==0: print("fixture was NOT scanned -- broken target, not a removed defect"); raise SystemExit
+if int(errors)>0: print("semgrep reported %s error(s) -- tooling failure, not a removed defect" % errors); raise SystemExit
+removed=sorted(base-mut); added=sorted(mut-base)
+if added: print("mutation ADDED finding(s) at line(s) %s" % added); raise SystemExit
+if want=="one" and len(removed)!=1: print("expected exactly 1 finding removed, got %d %s" % (len(removed),removed)); raise SystemExit
+if want=="same" and removed: print("value-only mutation removed finding(s) at %s -- rule keys on the value, not the defect" % removed); raise SystemExit
+print("OK")
+'; }
+  # rule<TAB>old<TAB>new. Each row must neutralize EXACTLY ONE finding. A new rule in 3d adds its
+  # rows here; the coverage check below fails if it does not.
+  TAB=$(printf '\t')
+  MUTS="ts-token-in-localstorage${TAB}\"access_token\"${TAB}\"theme\"
+ts-token-in-localstorage${TAB}\"apiKey\"${TAB}\"pageSize\"
+ts-token-in-localstorage${TAB}\"user_password\"${TAB}\"userNickname\"
+ts-token-in-localstorage${TAB}\"REFRESH_TOKEN\"${TAB}\"LAST_ROUTE\"
+ts-token-in-localstorage${TAB}localStorage[\"bearer\"]${TAB}localStorage[\"layout\"]
+ts-token-in-localstorage${TAB}{ authToken: accessToken }${TAB}{ sidebarWidth: 240 }"
+  # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
+  # on every line. A rule that stops firing here is matching something incidental about the file.
+  NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)"
+
+  # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
+  # this whole gate stays green while proving nothing about it.
+  uncovered=""
+  for y in "$RULES"/*.yaml; do
+    b=$(basename "$y" .yaml)
+    printf '%s\n' "$MUTS" | cut -f1 | grep -qx "$b" || uncovered="$uncovered $b"
+  done
+  chk "${uncovered:-none}" "none" "gate5: every rule has a mutation row (uncovered:${uncovered:-none})"
+
+  # Apply the literal first-occurrence replacement using the same awk as mutation-check.sh:86-90.
+  apply_mut(){ # $1=src $2=dst $3=old $4=new; rc=3 when nothing changed
+    OLD="$3" NEW="$4" awk '
+      BEGIN{ o=ENVIRON["OLD"]; n=ENVIRON["NEW"]; done=0 }
+      { if(!done){ i=index($0,o); if(i>0){ $0=substr($0,1,i-1) n substr($0,i+length(o)); done=1 } } print }
+      END{ if(!done) exit 3 }
+    ' "$1" > "$2"
+  }
+  run_mut_table(){ # $1=table $2=want(one|same) $3=label
+    printf '%s\n' "$1" | while IFS="$TAB" read -r rule old new; do
+      [ -n "$rule" ] || continue
+      y="$RULES/$rule.yaml"
+      fx=$(find "$RULES" -maxdepth 1 -name "$rule.*" ! -name '*.yaml' | head -1)
+      if [ ! -f "$y" ] || [ -z "$fx" ]; then
+        echo "  [FAIL] $3: no rule+fixture pair for $rule"; continue
+      fi
+      # Baseline must find the defect, AND must have genuinely parsed the fixture. A fixture whose
+      # extension the rule's `languages` never claims reports findings:0 scanned:0 errors:0
+      # (measured) -- the likeliest slip when adding rules in bulk.
+      # HONESTY NOTE: deleting this scanned check does NOT make the suite pass -- the
+      # "baseline found NOTHING" check below still fails. It is kept for the DIAGNOSTIC (it names
+      # the real cause instead of sending you hunting through a working rule), not as a guard.
+      # The `errors` check inside mut_verdict, by contrast, IS load-bearing: without it a
+      # syntactically broken fixture passes as a legitimately removed defect (measured).
+      base=$(scan_lines "$y" "$fx")
+      base_scanned=$(printf '%s' "$base" | cut -d'|' -f2)
+      base_errors=$(printf '%s' "$base" | cut -d'|' -f3)
+      if [ "$base_scanned" = "0" ]; then
+        echo "  [FAIL] $3 $rule: fixture $(basename "$fx") was NOT scanned -- extension not claimed by the rule's \`languages\`?"
+        rm -rf "$W" 2>/dev/null; continue
+      fi
+      if [ "$base_errors" != "0" ]; then
+        echo "  [FAIL] $3 $rule: baseline scan reported $base_errors error(s) -- fix the rule/fixture first"; continue
+      fi
+      case "$base" in
+        "|"*) echo "  [FAIL] $3 $rule: baseline found NOTHING -- cannot assess"; continue ;;
+      esac
+      W=$(mktemp -d "${TMPDIR:-/tmp}/sgm.XXXXXX")
+      if ! apply_mut "$fx" "$W/$(basename "$fx")" "$old" "$new"; then
+        echo "  [FAIL] $3 $rule: mutation was a NO-OP ('$old' not in fixture) -- proves nothing"
+        rm -rf "$W"; continue
+      fi
+      v=$(mut_verdict "${base%%|*}" "$(scan_lines "$y" "$W/$(basename "$fx")")" "$2")
+      if [ "$v" = "OK" ]; then echo "  [PASS] $3: $rule '$old' -> '$new'"
+      else echo "  [FAIL] $3: $rule '$old' -> '$new' ($v)"; fi
+      rm -rf "$W"
+    done
+  }
+  # The `find | while` subshell problem again: run_mut_table cannot update pass/fail directly, so
+  # its PASS/FAIL lines are counted from its output here.
+  mut_out=$(run_mut_table "$MUTS" one "gate5"; run_mut_table "$NCS" same "gate5-nc")
+  printf '%s\n' "$mut_out"
+  mp=$(printf '%s\n' "$mut_out" | grep -c '\[PASS\]'); mf=$(printf '%s\n' "$mut_out" | grep -c '\[FAIL\]')
+  pass=$((pass+mp)); fail=$((fail+mf))
+
+  # Gate 5 must itself be provably alive: a rule that matches the FILE rather than the defect
+  # (`languages` + a bare `pattern: localStorage.$F(...)`) survives every key mutation. If this
+  # does not get caught, the loop above is decorative.
+  W=$(mktemp -d "${TMPDIR:-/tmp}/sgm.XXXXXX")
+  fx=$(find "$RULES" -maxdepth 1 -name 'ts-token-in-localstorage.*' ! -name '*.yaml' | head -1)
+  cp "$fx" "$W/f.ts"
+  cat > "$W/taut.yaml" <<'YAML'
+rules:
+  - id: taut
+    languages: [js, ts]
+    severity: ERROR
+    message: matches any storage call at all -- deliberately tautological
+    pattern: localStorage.setItem(...)
+YAML
+  tb=$(scan_lines "$W/taut.yaml" "$W/f.ts")
+  apply_mut "$W/f.ts" "$W/g.ts" '"access_token"' '"theme"'
+  tv=$(mut_verdict "${tb%%|*}" "$(scan_lines "$W/taut.yaml" "$W/g.ts")" one)
+  chk "$([ "$tv" = "OK" ] && echo OK || echo caught)" "caught" "gate5-self: a file-matching (tautological) rule is caught ($tv)"
+  rm -rf "$W"
+fi
+
 echo ""
 echo "helper-script tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
