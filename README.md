@@ -129,12 +129,16 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `mutation-check.sh` | A regression test that passes with **and without** the fix — reverts the fix and requires the test to fail | 11 |
 | `empty-relationship-scan.sh` | `LOOKUP.get(k) or set()` fallthroughs, where a *missing* relationship silently satisfies a gate | 1 |
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
+| `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
+| `semgrep-rules/` | Authored cross-language rules for shapes `ruff`/`bandit` cannot reach (JS/TS storage of credentials; a file write with no resolved containment guard) | 2, 8 |
 
-The last two are **heuristics**: every hit is a question to answer by reading the code, never a
-confirmed defect, and **zero hits is never proof**. Each ships with tests, documented false
-positives, and documented blind spots. `tautology-scan.sh` covers the shape `mutation-check.sh`
-structurally cannot: when the escape hatch is in the *test*, no mutation of the code under test
-changes the result.
+Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
+reading the code, never a confirmed defect, and **zero hits is never proof**. Each ships with tests,
+documented false positives, and documented blind spots. `tautology-scan.sh` covers the shape
+`mutation-check.sh` structurally cannot: when the escape hatch is in the *test*, no mutation of the
+code under test changes the result. `field-coverage-scan.sh` exits **2**, not 0, when it finds no
+models or no hostile tests — there is nothing to compare, and reporting that as a pass would be the
+silent zero these probes exist to catch.
 
 ## Install
 

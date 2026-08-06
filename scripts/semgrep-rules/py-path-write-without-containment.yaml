@@ -1,0 +1,76 @@
+# Dimension 2 (input safety), path-traversal sink. CWE-22.
+#
+# Why this exists: dimension 2's sink list was "HTML/SVG/CSV/shell/SQL" -- a filesystem path was
+# not on it, and the words "traversal", "../", and "is_relative_to" appeared NOWHERE in this skill.
+# So a reviewer following dimension 2 exactly and thoroughly would never ask whether an
+# environment-sourced value reaches a path. This rule is the always-on backstop for that gap.
+#
+# WHAT THIS RULE DOES NOT PROVE -- read before trusting a zero. It checks that a containment guard
+# is *lexically present* in the same function as the write. It does NOT prove the guard is correct,
+# reachable, or applied to the right variable, and it is NOT taint analysis: a value that reaches
+# the path through a helper is invisible to it. Dimension 2's prose question stays the primary
+# proof; this rule is the cheap backstop, not a replacement. `bandit` does not raise this shape at
+# any severity (no taint analysis, `out_dir / name` matches no pattern), so there is no overlap.
+#
+# WHY NOT `mode: taint`, which is the obvious choice: measured on this exact vulnerability shape,
+# a taint rule flagged the FIXED function and MISSED the vulnerable one. Default taint mode is
+# intraprocedural, so it never crossed the `load_findings()` call boundary that real code always
+# has, and the sanitizer did not register. `errors` was empty throughout -- a confident finding on
+# the wrong line, which is more dangerous than a zero because it reads as working coverage.
+# Interprocedural analysis needs Semgrep Pro (a login-gated binary download), so it is unavailable
+# and unmeasurable behind a TLS-intercepting proxy. Do not "improve" this rule into taint mode
+# without re-measuring which line it lands on.
+#
+# KNOWN FALSE POSITIVE, measured against 31 real files: a write whose filename is a literal but
+# which is built through an intermediate variable, e.g.
+#     path = snapshot_path(cache_dir)      # -> (cache_dir / "policy-catalog.json")
+#     tmp = path.with_suffix(".json.tmp")
+#     tmp.write_text(...)                  # <- flagged; no user input reaches this path
+# The single-expression literal exclusions below cannot see through the variable. An exclusion for
+# the `.with_suffix()` form was written and MEASURED TO BE INERT (identical findings on all 7
+# probe files), so it was discarded rather than shipped as a pattern that looks protective and
+# does nothing. Triage this shape as a question, per the house rule for every probe here.
+rules:
+  - id: py-path-write-without-containment
+    languages: [python]
+    severity: ERROR
+    message: >-
+      dim2: file write with no resolved containment guard in the same function. If any component of
+      this path comes from scanned data, tool input, or an API response, it can escape the intended
+      directory -- an identifier allowlist is NOT a containment check, and routinely permits "/"
+      because real cloud identifiers require it. Assert on the resolved path immediately before the
+      write (Path.resolve().is_relative_to(out_dir)); do not deduce containment from upstream
+      validation. This rule proves only that a guard is lexically present, never that it is correct.
+    metadata:
+      qr-dimension: 2
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $P.write_text(...)
+          - pattern: $P.write_bytes(...)
+      # Writes to a hardcoded filename carry no traversal risk from input data. Both the
+      # `Path(...) / "literal"` and `$DIR / "literal"` spellings are excluded; each was measured
+      # to be load-bearing (removing them reintroduces the finding on the g4 near-miss below).
+      - pattern-not: (Path(...) / "...").write_text(...)
+      - pattern-not: (Path(...) / "...").write_bytes(...)
+      - pattern-not: ($D / "...").write_text(...)
+      - pattern-not: ($D / "...").write_bytes(...)
+      # The four guard spellings that DO constitute containment. All four were measured: with only
+      # the first (the shape originally recorded for this rule), the other three were FALSE
+      # POSITIVES ON CORRECT CODE -- the negative form, the positive form, the assert form, and
+      # the `relative_to()`-raises form are all real ways people write this guard, and a rule that
+      # only recognizes one spelling punishes three correct implementations.
+      - pattern-not-inside: |
+          if not $Q.resolve().is_relative_to(...):
+            ...
+          ...
+      - pattern-not-inside: |
+          if $Q.resolve().is_relative_to(...):
+            ...
+      - pattern-not-inside: |
+          assert $Q.resolve().is_relative_to(...)
+          ...
+      - pattern-not-inside: |
+          $Q.relative_to(...)
+          ...

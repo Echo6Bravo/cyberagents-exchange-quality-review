@@ -72,6 +72,16 @@ Decide per target, and state the decision out loud like any other coverage call:
   (grep-only); default to running it whenever test files exist. It is **line-based**: a wrapped
   `or not` continuation and any assertion over a *derived* property are invisible to it, so zero
   hits is not proof — see dimension 11.
+- **`scripts/field-coverage-scan.sh <target>` (dimension 2).** Run it **if** the target has Python
+  models with annotated fields *and* any hostile-value tests. It diffs the string fields the code
+  declares against the fields a hostile test actually names, because the failure worth hunting is a
+  thorough payload set applied to **one field** — which is how a real arbitrary-file-write shipped
+  past a suite of 24 injection payloads that all landed on the field the checklist pointed at.
+  Triage every uncovered field as a *question* ("does anything untrusted reach this, and to which
+  sink?"); many are legitimately fine. Python-only and `str`-only by design, and it **cannot** tell
+  you whether a payload suited the field's sink — the case that actually shipped reads as covered.
+  It exits 2 rather than 0 when there are no models or no hostile tests to compare, so a clean run
+  is never manufactured out of having found nothing.
 - **`scripts/mutation-check.sh` (dimension 11).** For each regression test backing a fixed finding,
   run it to prove the test FAILS on revert — **only if all preconditions hold:** (a) a runnable
   test command exists; (b) it is fast and **side-effect-free** (no live tenant/API token, no
@@ -160,12 +170,38 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      question to answer by reading the code, and zero hits is NOT proof — still write the actual
      empty-input test.
 
-2. **Input safety — injection/XSS.** Every value sourced from the scanned environment (names,
-   IDs, components, free text) that reaches HTML/SVG/CSV/shell/SQL must be escaped/parameterized
-   for its sink. Prove it: inject `<script>`, attribute-breakout, and formula-injection
-   payloads into every field and verify (DOM-level / parser-level) that nothing executes.
+2. **Input safety — injection/XSS/path traversal.** Every value sourced from the scanned
+   environment (names, IDs, components, free text) that reaches HTML/SVG/CSV/shell/SQL/**a
+   filesystem path** must be escaped/parameterized/**contained** for its sink. Prove it: inject
+   `<script>`, attribute-breakout, and formula-injection payloads into every field and verify
+   (DOM-level / parser-level) that nothing executes.
    CodeQL's taint queries are the automated backstop — but the payload-injection probe is the
    primary proof; don't rely on the scanner alone.
+   - *A path is a sink.* A value that becomes part of a **path** — a filename, a directory, an
+     archive entry, a storage key — is as much a sink as one that becomes shell, and its payloads
+     are different: `../`, a leading `/`, `..` as a whole segment, a NUL, a trailing separator, a
+     symlink target. **The correct validator for a shell or SQL sink is usually the WRONG one for
+     a path sink:** identifier allowlists routinely permit `/` because real cloud identifiers
+     require it. Assert containment on the **resolved** path
+     (`Path.resolve().is_relative_to(out_dir)`) as the last statement before the write — never
+     deduce it from upstream validation, because that deduction breaks silently the first time
+     someone adds a path component nobody re-validated. `bandit` does not raise this shape at any
+     severity, so "the scanners are clean" is not evidence here.
+   - *Ask which FIELDS the payloads reached, not just which payloads exist.* The failure mode worth
+     hunting is a thorough payload set applied to one field. Run
+     `scripts/field-coverage-scan.sh <target>` (dimension 2's payload-coverage probe) to diff
+     declared string fields against the fields any hostile test actually names; triage each
+     uncovered field as a question. It cannot tell you whether a payload *suited* the field's sink —
+     that judgement stays here, and it is the part that fails in practice.
+   - *A safety comment that clears one component is a reason to look harder, not coverage.* Where a
+     comment argues a specific component is safe, enumerate **every** component that reaches the
+     sink and check each: a comment proving `cloud` cannot escape, silent about the `account_id` and
+     `region` interpolated into the same string, stops the next reader from checking the siblings —
+     worse than no comment. The fix is usually to replace the argument with an assertion, which
+     cannot be true of only one component.
+   - Severity note: an arbitrary file write reachable from tool input data is **Critical**
+     (`CWE-22`) under the existing "harm to the user or a third party" basis, regardless of what the
+     scanners say.
 
 3. **Robustness on messy data AND messy invocation.** Two surfaces, same bar — fail cleanly
    with an actionable message (never a raw stack trace) or degrade gracefully, and verify the
