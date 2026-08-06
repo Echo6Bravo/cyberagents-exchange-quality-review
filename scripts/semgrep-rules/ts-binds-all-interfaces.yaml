@@ -1,0 +1,55 @@
+# Dimension 17 (access control & agent authority). CWE-1327.
+#
+# WHY THIS EXISTS. An MCP server or local agent HTTP surface almost never has authN of its own -- the
+# access control IS the loopback bind. `listen(port, "0.0.0.0")` removes it, exposing the endpoint to
+# everything that can route to the host: the coffee-shop LAN, the container's bridge network, the
+# corporate VPN subnet. `ruff`/`bandit` are Python-only and cannot see express/fastify/node `http`.
+#
+# WHY THIS IS A WARNING AND ts-wildcard-cors IS AN ERROR. Both widen reach, but the wildcard-CORS case
+# is reachable from any web page the operator visits, while this one requires network adjacency. In a
+# published container image, though, adjacency is the normal case rather than the exception -- which is
+# why dimension 17 escalates this to High when the endpoint exposes tools or scan data and nothing
+# authenticates the caller. Severity here is location-dependent, and the message says so.
+#
+# NO FALSE-POSITIVE RATE IS CLAIMED. Against 1138 real JS/TS files this rule reported 0 findings, but
+# the corpus contains 0 occurrences of `.listen(` -- so the zero measures the corpus, not the rule.
+# Validated on planted-defect fixtures only; do not report it as "0 false positives."
+#
+# KNOWN FALSE POSITIVES (measured; triage by reading):
+#   * a containerized service that MUST bind 0.0.0.0 to be reachable from outside its namespace. This
+#     is legitimate and common. The finding is still worth reading, because the question it asks is not
+#     "is the bind wrong" but "what authenticates the caller once the bind is correct" -- and for a
+#     container the answer is usually nothing.
+#   * a test harness or example that binds broadly on purpose.
+#
+# KNOWN BLIND SPOTS:
+#   * `listen(port)` with no host. Node's default for `http.Server` is effectively all interfaces, so
+#     the commonest real exposure has NO construct to match at all -- it is an absence. This rule
+#     cannot see it and neither can any pattern; it needs a human to ask what the default is for the
+#     framework in use. This is the single biggest limit here, and the reason zero hits proves nothing.
+#   * the host arriving from a parameter or an unresolvable expression (`process.env.HOST ?? "0.0.0.0"`).
+#     A literal assigned to a local `const` one line earlier IS caught (constant propagation).
+#   * `"::"` / `"[::]"` (the IPv6 any-address), `HOST=0.0.0.0` in a Dockerfile or compose file, and
+#     `--host 0.0.0.0` passed to a dev server on the command line. Each is the same exposure in a
+#     different vocabulary; none is matched here.
+rules:
+  - id: ts-binds-all-interfaces
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      dim17: the server binds every network interface (`0.0.0.0`), not loopback. For a local agent or
+      MCP server the loopback bind is usually the only access control there is, so this exposes the
+      endpoint to the whole reachable network. Dimension 17 rates it High when the endpoint exposes
+      tools or scan data and nothing authenticates the caller. Fix by binding `127.0.0.1`, or -- if a
+      broad bind is genuinely required, as in a container -- by adding real authN, since the bind is
+      no longer providing any. Related blind spot worth checking by hand: `listen(port)` with no host
+      argument is also all-interfaces on Node, and has no construct for this rule to match.
+    metadata:
+      qr-dimension: 17
+      cwe: "CWE-1327: Binding to an Unrestricted IP Address"
+      confidence: MEDIUM
+    pattern-either:
+      # The trailing `...` covers the callback form too; measured to match both `listen(p, "0.0.0.0")`
+      # and `listen(p, "0.0.0.0", () => {})` with a single pattern.
+      - pattern: $A.listen($P, "0.0.0.0", ...)
+      - pattern: '$A.listen({..., host: "0.0.0.0", ...})'

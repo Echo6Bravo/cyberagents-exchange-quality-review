@@ -1,0 +1,84 @@
+# Dimension 8 (secrets & credential handling). CWE-328, CWE-338.
+#
+# WHY THIS EXISTS, and why there is deliberately NO Python equivalent. `bandit` already owns these
+# constructs for Python: B324 flags `hashlib.md5`/`sha1` and B311 flags `random` for security use. Per
+# the no-duplication rule, adding Python rules here would double-report every finding. TypeScript has
+# no such coverage at all -- `ruff` and `bandit` cannot parse it -- and a large share of Exchange
+# listings are TypeScript MCP servers. That asymmetry is the entire gap this rule fills.
+#
+# The caveat worth stating: `bandit` is OPTIONAL in this toolkit. When it is absent, Python is as
+# uncovered as TypeScript was, and the run's "degraded -- bandit not available" label is what carries
+# that. Do not read "bandit owns Python" as unconditional coverage.
+#
+# TWO CONSTRUCTS, ONE RULE, because they are one triage question in practice ("is this value load-
+# bearing for security, or is it a cache key?") and splitting them would double the reviewer's work
+# without changing a single answer.
+#
+# SEVERITY IS LOCATION-DEPENDENT and the message says so. `md5` as a cache key or an ETag is not a
+# defect at all. `md5` for integrity verification of a downloaded artifact, or `Math.random()` minting
+# a session token, API key, or nonce, is High: the token is guessable, because `Math.random()` is not a
+# CSPRNG and its state is recoverable from a handful of outputs.
+#
+# MEASURED HIT RATE, so the claim is bounded rather than implied: 14 findings across 1138 real
+# first-and-third-party JS/TS files (392k lines, minified files excluded -- see the runtime note in
+# test_scripts.sh for why they must be). Every one was a genuine `Math.random()`-derived identifier or
+# weak digest, i.e. no pattern misfires -- but on inspection, 13 of 14 were legitimate non-security
+# uses (a cache-busting query param, a DOM event-name suffix, an iframe uid) in vendored browser
+# extensions and libraries. The single first-party hit was a filename uniquifier. That ratio is why
+# `confidence: LOW` and why the message leads with the triage question rather than with a verdict:
+# expect this rule to be mostly right about the construct and mostly wrong about the risk.
+#
+# KNOWN FALSE POSITIVES (measured; these are the MAJORITY of hits on real code, so triage by reading):
+#   * `md5`/`sha1` as a non-security digest: cache keys, ETags, dedupe fingerprints, content-addressed
+#     filenames, or verifying a checksum a third party publishes only as md5. All fine. The question is
+#     whether an attacker gains anything by finding a collision.
+#   * `Math.random()` for jitter, retry backoff, sampling, or a test fixture. All fine, and common.
+#     Only the token/id/secret use is a defect. `Math.random().toString(...)` is the pattern used
+#     precisely because it is the shape that produces an ID string rather than a number -- but a
+#     backoff of `Math.random().toString()` would still be a false positive.
+#
+# KNOWN BLIND SPOTS:
+#   * `Math.random()` used WITHOUT `.toString(...)` -- e.g. `Math.floor(Math.random() * 1e9)` as an id.
+#     Measured NOT matched, and deliberately so: matching bare `Math.random()` fires on every jitter and
+#     sampling call in a codebase, which is a false-positive rate that would get the rule ignored. The
+#     narrower pattern trades recall for a hit list a human will actually read.
+#   * `crypto.createHash($ALG)` where the algorithm comes from a parameter or an unresolvable
+#     expression. A literal in a local `const` IS caught (constant propagation, measured).
+#   * `createHmac("md5", ...)`, `crypto.pbkdf2` with a low iteration count, `createCipheriv` with a
+#     static IV, and any weak algorithm reached through a wrapper library. None is matched here.
+#   * `Date.now()` as an id-generation source, which is worse than `Math.random()` and has no crypto
+#     vocabulary at all.
+rules:
+  - id: ts-weak-hash-or-random
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      dim8: a broken hash (`md5`/`sha1`) or a non-cryptographic RNG (`Math.random()`) is in use. If the
+      value is security-load-bearing -- verifying an artifact's integrity, or minting a token, session
+      id, nonce, or API key -- this is High: `Math.random()` is not a CSPRNG and its internal state is
+      recoverable from a few outputs, so the value is guessable. If it is a cache key, ETag, dedupe
+      fingerprint, or retry jitter, it is not a defect; say so and move on. Fix with `sha256` or
+      `crypto.randomBytes()`/`crypto.randomUUID()`. `bandit` covers the Python equivalents (B324,
+      B311) when it is installed; nothing else in this toolkit reads TypeScript, which is why this
+      rule exists.
+    metadata:
+      qr-dimension: 8
+      cwe: "CWE-328: Use of Weak Hash / CWE-338: Use of Cryptographically Weak PRNG"
+      confidence: LOW
+    pattern-either:
+      # The two literal spellings, kept explicitly because they are what constant propagation resolves
+      # to -- measured: `const ALG = "md5"; createHash(ALG)` IS caught by these, whereas the
+      # metavariable-regex branch below binds the identifier `ALG` and does not match it. Both branches
+      # are needed; neither subsumes the other.
+      - pattern: crypto.createHash("md5")
+      - pattern: crypto.createHash("sha1")
+      # Case and algorithm variants. `createHash("MD5")` is valid Node and was measured NOT caught by
+      # the literal branches above.
+      - patterns:
+          - pattern: crypto.createHash($ALG)
+          - metavariable-regex:
+              metavariable: $ALG
+              regex: (?i)^["'](md5|sha1|md4|ripemd)["']$
+      # Scoped to `.toString(...)` on purpose: that is the id-generating shape. See the blind spot on
+      # bare `Math.random()`, which is a deliberate recall/precision trade, not an oversight.
+      - pattern: Math.random().toString(...)

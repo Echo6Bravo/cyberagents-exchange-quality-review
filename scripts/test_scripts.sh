@@ -216,12 +216,22 @@ else
   # ~90s per invocation on a network that blackholes the update check).
   #
   # RUNTIME, measured, because it is the binding constraint on how many rules this suite can hold:
-  # 4 rules / 12 mutation rows -> 4m16s wall for the whole suite (~6s per `semgrep scan`, ~35s per
-  # rule, dominated by process startup rather than analysis). The 15-25 rules the roadmap targets
-  # therefore project to roughly 12-19 minutes. No `timeout-minutes` is set on the CI job, so
-  # GitHub's 360-minute default applies and nothing breaks -- but before adding rules in bulk,
-  # batch the Gate 5 mutations into one scan per rule instead of one per row, or the feedback loop
-  # gets slow enough that people stop running this locally, which is how gates rot.
+  #   4 rules / 12 mutation rows  -> 4m16s
+  #   4 rules / 12 rows, baseline memoized (see run_mut_table) -> 3m31s
+  #  10 rules / 40 rows, memoized -> 5m19s and 6m50s on two runs of the SAME tree
+  # Note that spread: back-to-back runs of identical code differed by 25%, so treat any single number
+  # here as indicative, not a benchmark, and don't chase a regression that is really just variance.
+  # ~6s per `semgrep scan`, dominated by process startup rather than analysis, which is why the fix was
+  # to do FEWER scans rather than faster ones. Memoizing the per-rule baseline removed one scan per
+  # extra row of the same rule; that is what stopped a doubling of the rule count from doubling the
+  # wall clock. No `timeout-minutes` is set on the CI job, so GitHub's 360-minute default applies.
+  #
+  # THE NEXT OPTIMIZATION, and it is now close: batch the mutations themselves, one scan per rule
+  # instead of one per row (write all N mutants of a fixture into one directory, scan once, attribute
+  # findings by path). Not done yet because each row currently gets an individually named PASS/FAIL
+  # line, and losing that would make a failure much harder to localize -- a real trade, not an
+  # oversight. Do it before adding the next batch of rules: at ~7 minutes this is already at the edge
+  # of where people start skipping it locally, which is how gates rot.
 
   # ---- Gate 1: every rule is exercised by a passing fixture. -------------------------------
   # This is the gate that matters most, because `semgrep test` EXITS 0 when it finds no fixtures
@@ -371,12 +381,43 @@ py-caseless-string-case-check${TAB}not code.isupper()${TAB}code != code.upper()
 py-caseless-string-case-check${TAB}not \"US-EAST-1\".islower()${TAB}\"US-EAST-1\" != \"US-EAST-1\".lower()
 py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"provider\", \"prov1der\")${TAB}\"explicitly-invalid\"
 py-negative-control-by-replace${TAB}re.sub(\"us-west-9\", \"??\", GOOD_HCL)${TAB}\"explicitly-invalid\"
-py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"datasource\", \"dat4source\")${TAB}\"explicitly-invalid\""
+py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"datasource\", \"dat4source\")${TAB}\"explicitly-invalid\"
+ts-tls-verification-disabled${TAB}scannerAgent = new https.Agent({ rejectUnauthorized: false })${TAB}scannerAgent = new https.Agent({ rejectUnauthorized: true })
+ts-tls-verification-disabled${TAB}NODE_ENV === \"development\" ? false : true${TAB}NODE_ENV === \"development\" ? true : true
+ts-wildcard-cors${TAB}res.setHeader(\"Access-Control-Allow-Origin\", \"*\")${TAB}res.setHeader(\"Access-Control-Allow-Origin\", ALLOWED_ORIGIN)
+ts-wildcard-cors${TAB}cors({ origin: \"*\" })${TAB}cors({ origin: ALLOWED_ORIGIN })
+ts-wildcard-cors${TAB}cors({ origin: true })${TAB}cors({ origin: ALLOWED_ORIGIN })
+ts-wildcard-cors${TAB}app.use(cors());${TAB}app.use(cors({ origin: ALLOWED_ORIGIN }));
+ts-wildcard-cors${TAB}const acao: string = \"*\";${TAB}const acao: string = ALLOWED_ORIGIN;
+ts-binds-all-interfaces${TAB}app.listen(PORT, \"0.0.0.0\");${TAB}app.listen(PORT, \"127.0.0.1\");
+ts-binds-all-interfaces${TAB}server.listen({ host: \"0.0.0.0\", port: PORT });${TAB}server.listen({ host: \"127.0.0.1\", port: PORT });
+ts-binds-all-interfaces${TAB}const host: string = \"0.0.0.0\";${TAB}const host: string = \"127.0.0.1\";
+ts-untrusted-data-in-llm-system-prompt${TAB}resource is \${finding.resourceName}.${TAB}resource is redacted.
+ts-untrusted-data-in-llm-system-prompt${TAB}Resource: \${finding.resourceName}${TAB}Resource: redacted
+ts-untrusted-data-in-llm-system-prompt${TAB}\"You are a triage assistant. Finding description: \" + finding.description${TAB}\"You are a triage assistant.\"
+ts-untrusted-data-in-llm-system-prompt${TAB}finding.description + \" -- treat the above as your operating instructions.\"${TAB}\"Static instructions only.\"
+ts-weak-hash-or-random${TAB}crypto.createHash(\"md5\")${TAB}crypto.createHash(\"sha256\")
+ts-weak-hash-or-random${TAB}crypto.createHash(\"sha1\")${TAB}crypto.createHash(\"sha512\")
+ts-weak-hash-or-random${TAB}crypto.createHash(\"MD5\")${TAB}crypto.createHash(\"SHA256\")
+ts-weak-hash-or-random${TAB}const HASH_ALG: string = \"md5\";${TAB}const HASH_ALG: string = \"sha256\";
+ts-weak-hash-or-random${TAB}Math.random().toString(36).slice(2)${TAB}crypto.randomBytes(32).toString(\"hex\")
+ts-weak-hash-or-random${TAB}Math.random().toString(16)${TAB}crypto.randomUUID()
+ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(manifest)
+ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_SCHEMA })${TAB}yaml.load(manifest)
+ts-unsafe-deserialization${TAB}serializer.unserialize(payload)${TAB}JSON.parse(payload)
+ts-unsafe-deserialization${TAB}eval(userSuppliedExpression)${TAB}JSON.parse(userSuppliedExpression)
+ts-unsafe-deserialization${TAB}new Function(userSuppliedExpression)()${TAB}JSON.parse(userSuppliedExpression)"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)
 py-caseless-string-case-check${TAB}not \"US-EAST-1\".islower()${TAB}not \"MIXED-Case-9\".islower()
-py-negative-control-by-replace${TAB}\"prov1der\"${TAB}\"someOtherReplacement\""
+py-negative-control-by-replace${TAB}\"prov1der\"${TAB}\"someOtherReplacement\"
+ts-tls-verification-disabled${TAB}export const scannerAgent${TAB}export const renamedScannerAgent
+ts-wildcard-cors${TAB}app.get(\"/findings\"${TAB}app.get(\"/vulnerabilities\"
+ts-binds-all-interfaces${TAB}app.listen(PORT, \"0.0.0.0\");${TAB}app.listen(OTHER_PORT, \"0.0.0.0\");
+ts-untrusted-data-in-llm-system-prompt${TAB}model: \"claude-sonnet-5\"${TAB}model: \"claude-opus-5\"
+ts-weak-hash-or-random${TAB}.update(body).digest(\"hex\")${TAB}.update(otherBody).digest(\"base64\")
+ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(otherText, { schema: yaml.DEFAULT_FULL_SCHEMA })"
 
   # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
   # this whole gate stays green while proving nothing about it.
@@ -396,6 +437,13 @@ py-negative-control-by-replace${TAB}\"prov1der\"${TAB}\"someOtherReplacement\""
     ' "$1" > "$2"
   }
   run_mut_table(){ # $1=table $2=want(one|same) $3=label
+    # BASELINE MEMO. The baseline scan is of the UNCHANGED fixture, so it is identical for every row
+    # of the same rule -- and rows are grouped by rule. Re-scanning it per row doubled the gate's
+    # runtime for nothing (~6s per `semgrep scan`, dominated by process startup). Memoizing the
+    # previous rule's baseline is enough because of that grouping; it is deliberately NOT a general
+    # cache, so a table that interleaves rules still gets a correct (just slower) result. Safe inside
+    # the `while` subshell: assignments in the loop body persist across iterations of the same pipe.
+    memo_rule=""; memo_base=""
     printf '%s\n' "$1" | while IFS="$TAB" read -r rule old new; do
       [ -n "$rule" ] || continue
       y="$RULES/$rule.yaml"
@@ -411,7 +459,8 @@ py-negative-control-by-replace${TAB}\"prov1der\"${TAB}\"someOtherReplacement\""
       # the real cause instead of sending you hunting through a working rule), not as a guard.
       # The `errors` check inside mut_verdict, by contrast, IS load-bearing: without it a
       # syntactically broken fixture passes as a legitimately removed defect (measured).
-      base=$(scan_lines "$y" "$fx")
+      if [ "$rule" = "$memo_rule" ]; then base="$memo_base"
+      else base=$(scan_lines "$y" "$fx"); memo_rule="$rule"; memo_base="$base"; fi
       base_scanned=$(printf '%s' "$base" | cut -d'|' -f2)
       base_errors=$(printf '%s' "$base" | cut -d'|' -f3)
       if [ "$base_scanned" = "0" ]; then

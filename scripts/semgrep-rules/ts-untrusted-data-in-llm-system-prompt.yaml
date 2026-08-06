@@ -1,0 +1,79 @@
+# Dimension 13 (indirect prompt injection). CWE-1427.
+#
+# WHY THIS EXISTS. Dimension 13's central requirement is that scanned data reaches the model as DATA,
+# in the user turn, fenced and labelled untrusted -- never spliced into the system channel, which is
+# the channel the model is trained to treat as its own instructions. A resource name, an S3 bucket
+# tag, a git commit message, or a vulnerability description is attacker-controllable in exactly the
+# repos this skill reviews: the whole point of the tool is to read data someone else wrote.
+#
+# Nothing else in the toolkit can see this. `bandit` has no concept of an LLM call, and the shape is
+# specific to the SDK's argument structure rather than to a dangerous function, so it is genuinely
+# rule-shaped rather than greppable -- `system:` alone appears in every correct call too.
+#
+# WHY THE STRING-CONCAT BRANCHES EARN THEIR KEEP. The template-literal form is the one people write,
+# but the concat form is what survives a refactor away from template literals, and it reads as more
+# careful while being identical. Both measured matching, both left in.
+#
+# ONE MEASURED TRAP, recorded because it cost a full debug cycle and looks like a fix: adding
+# `pattern-not: 'system: `...`'` to spare "a static template literal with no interpolation" CANCELS
+# THE MATCH IT IS MEANT TO PRESERVE. Inside a template literal, semgrep's `...` also matches
+# interpolations, so the exclusion swallows the very defect. It was deleted, not narrowed. The plain
+# static-string case never matched in the first place, so nothing needed sparing.
+#
+# MEASURED, and thin enough to say so: 0 findings across 1138 real JS/TS files (392k lines). Unlike the
+# sibling TS rules, this zero is not entirely vacuous -- 4 of those files DO contain a `system:` key --
+# but 4 files is far too small a denominator to call a false-positive rate. Treat this as "did not
+# misfire on the handful of real LLM calls available to test against," not as a precision measurement.
+#
+# KNOWN FALSE POSITIVES (measured; triage by reading -- and the triage question is specific):
+#   * interpolating something the TOOL controls, not the scanned data: a tenant id from config, a
+#     hardcoded severity list, the current date, a model name. These are real FPs and probably the
+#     majority of hits on a well-written repo. The question to answer is not "is anything
+#     interpolated" but "can anything reaching this string be written by whoever owns the scanned
+#     asset." A resource NAME is attacker-controlled; a resource COUNT is not.
+#   * a system prompt assembled from an operator-authored config file. Trusted-ish, but worth asking
+#     who may edit that file, and whether the tool re-reads it from a repo it also scans.
+#
+# KNOWN BLIND SPOTS:
+#   * a system prompt built in a variable and passed by name (`system: prompt`) -- the join happens
+#     somewhere this rule never looks. Very common, and it means zero hits proves nothing.
+#   * the Python SDK. Deliberate: dimension 13 applies equally there, but a Python rule for this shape
+#     would need the same argument-structure matching in a language where `bandit` already runs, and
+#     no measurement of its false-positive rate exists yet. Better an honest TS-only claim than an
+#     unmeasured two-language one.
+#   * `.append()`-style prompt building, message arrays assembled in a loop, and prompt templates
+#     rendered by a templating library. None has a matchable literal.
+#   * a `developer` role (newer OpenAI naming) rather than `system`.
+rules:
+  - id: ts-untrusted-data-in-llm-system-prompt
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim13: data is interpolated into the LLM SYSTEM channel. If any part of it comes from a scanned
+      asset -- a resource name, tag, description, or commit message -- then whoever controls that
+      asset is writing instructions into the channel the model trusts most, which is indirect prompt
+      injection. Dimension 13 rates this High when the model's output drives an action (a tool call,
+      a generated remediation script) rather than only a report. Fix by moving the data into the user
+      turn, fenced and labelled untrusted, and keeping the system prompt static. Triage question:
+      not "is something interpolated" but "can the owner of the scanned asset write any of it."
+    metadata:
+      qr-dimension: 13
+      cwe: "CWE-1427: Improper Neutralization of Input Used for LLM Prompting"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # Anthropic-style top-level `system:`.
+          - pattern: 'system: `...${...}...`'
+          - pattern: 'system: "..." + $X'
+          - pattern: 'system: $X + "..."'
+          # OpenAI-style role/content message object -- the same defect, a different SDK's vocabulary.
+          - pattern: '{role: "system", content: `...${...}...`}'
+          - pattern: '{role: "system", content: "..." + $X}'
+      # A static prompt split across two string literals purely to satisfy a line-length limit is the
+      # RECOMMENDED shape, not a defect -- and `system: "..." + $X` matches it, because a literal is a
+      # perfectly good `$X`. Found by `semgrep test` firing on this rule set's own must-not-match case.
+      # Measured: this spares the all-literal forms (2-way and 3-way) while STILL catching a mixed
+      # chain like `"One. " + "Two. " + finding.raw`, which is the shape that would make a naive
+      # exclusion dangerous. `pattern-not` and `pattern-not-inside` were measured identical here; the
+      # simpler one is used, unlike the two dim-11 rules where only `-inside` worked.
+      - pattern-not: 'system: "..." + "..."'

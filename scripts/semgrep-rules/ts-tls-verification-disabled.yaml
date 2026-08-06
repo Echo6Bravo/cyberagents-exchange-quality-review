@@ -1,0 +1,61 @@
+# Dimension 6 (version portability & TRANSPORT SECURITY). CWE-295.
+#
+# WHY THIS EXISTS. Dimension 6 already says "never `CERT_NONE`/`verify=False`/`-k`", and for Python
+# `bandit` enforces it as B501 -- which is exactly why there is deliberately NO Python rule here.
+# The Node/TypeScript equivalent, `rejectUnauthorized: false`, has no such enforcement: `ruff` and
+# `bandit` cannot see TypeScript at all (measured: 0 findings on a TS probe carrying four planted
+# defects). Since a large share of Exchange listings are TypeScript MCP servers, that left the
+# dimension's central requirement unenforced on the majority artifact type.
+#
+# It is one line, it disables certificate verification for every request made through that agent,
+# and it is routinely copied from a Stack Overflow answer about a self-signed dev certificate into
+# code that later carries a bearer token to a real API. That combination -- a silent MITM window on
+# a credentialed request -- is why dimension 6 rates it a High rather than a portability nit.
+#
+# NO FALSE-POSITIVE RATE IS CLAIMED, and the reason is worth stating rather than hiding behind a zero.
+# Against 1138 real JS/TS files (392k lines) this rule reported 0 findings -- but that corpus contains 0
+# occurrences of `rejectUnauthorized` in any form, so the zero measures the corpus, not the rule. It is
+# a true negative with no discriminating power. The same applies to `ts-wildcard-cors` and
+# `ts-binds-all-interfaces`: browser and CLI code, which is what a laptop's JS corpus mostly is, has no
+# server-side TLS or bind configuration in it. Validated on planted-defect fixtures only. Say that in a
+# review rather than reporting "0 false positives."
+#
+# KNOWN FALSE POSITIVES (measured; triage by reading):
+#   * a deliberately-insecure test fixture or a local-dev-only agent guarded by an env check. The
+#     guard is usually real, and usually not visible on the matched line. Confirm the guard cannot
+#     be reached in a production run before dismissing -- "it's only for dev" is the sentence that
+#     precedes most of these shipping.
+#
+# KNOWN BLIND SPOTS:
+#   * `NODE_TLS_REJECT_UNAUTHORIZED=0` in an env file, Dockerfile, or CI workflow. Same effect,
+#     process-wide and worse, but it is not a JS/TS construct so this rule cannot see it. Grep for it
+#     separately -- it is the more common form in containerized MCP servers.
+#   * the value arriving through a variable or config object (`{ rejectUnauthorized: allowInsecure }`)
+#     rather than a literal `false`.
+#   * `agentOptions`, `strictSSL: false` (request/npm-style), and `curl -k` in a spawned shell
+#     command. Each is the same defect in a different vocabulary; none is matched here.
+rules:
+  - id: ts-tls-verification-disabled
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim6: TLS certificate verification is disabled (`rejectUnauthorized: false`). Every request
+      through this agent accepts any certificate, so a network attacker can read and modify the
+      traffic -- and if any of it carries a token, that token is exposed. Dimension 6 treats this as
+      High on a credentialed request. Fix by trusting the specific CA instead (`ca:` /
+      `NODE_EXTRA_CA_CERTS`) rather than disabling verification. `bandit` catches the Python
+      equivalent (B501); nothing in this toolkit catches the TypeScript one, which is why this rule
+      exists.
+    metadata:
+      qr-dimension: 6
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+    # Two spellings, because the environment-conditional form needs its own pattern: `...false...`
+    # is not valid inside a property value (semgrep reports a config error, measured), and the plain
+    # `rejectUnauthorized: false` pattern does NOT match a ternary -- it wants the literal as the
+    # whole value. The `semgrep test` annotation on the ternary line is what caught that; without the
+    # fixture carrying that case, this rule would have shipped silently missing the commonest
+    # real-world spelling of "insecure in dev only."
+    pattern-either:
+      - pattern: 'rejectUnauthorized: false'
+      - pattern: 'rejectUnauthorized: $COND ? false : $ELSE'
