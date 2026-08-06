@@ -214,6 +214,14 @@ else
   # NOTE: `--metrics=off --disable-version-check` are scan-only -- `semgrep test`/`validate` REJECT
   # them, so they appear only on the `semgrep scan` calls further down (where omitting them costs
   # ~90s per invocation on a network that blackholes the update check).
+  #
+  # RUNTIME, measured, because it is the binding constraint on how many rules this suite can hold:
+  # 4 rules / 12 mutation rows -> 4m16s wall for the whole suite (~6s per `semgrep scan`, ~35s per
+  # rule, dominated by process startup rather than analysis). The 15-25 rules the roadmap targets
+  # therefore project to roughly 12-19 minutes. No `timeout-minutes` is set on the CI job, so
+  # GitHub's 360-minute default applies and nothing breaks -- but before adding rules in bulk,
+  # batch the Gate 5 mutations into one scan per rule instead of one per row, or the feedback loop
+  # gets slow enough that people stop running this locally, which is how gates rot.
 
   # ---- Gate 1: every rule is exercised by a passing fixture. -------------------------------
   # This is the gate that matters most, because `semgrep test` EXITS 0 when it finds no fixtures
@@ -357,10 +365,18 @@ ts-token-in-localstorage${TAB}\"REFRESH_TOKEN\"${TAB}\"LAST_ROUTE\"
 ts-token-in-localstorage${TAB}localStorage[\"bearer\"]${TAB}localStorage[\"layout\"]
 ts-token-in-localstorage${TAB}{ authToken: accessToken }${TAB}{ sidebarWidth: 240 }
 py-path-write-without-containment${TAB}target.write_text(VULN_TEXT)${TAB}(Path(out_dir) / \"fixed.tf\").write_text(VULN_TEXT)
-py-path-write-without-containment${TAB}target.write_bytes(VULN_BYTES)${TAB}(Path(out_dir) / \"fixed.zip\").write_bytes(VULN_BYTES)"
+py-path-write-without-containment${TAB}target.write_bytes(VULN_BYTES)${TAB}(Path(out_dir) / \"fixed.zip\").write_bytes(VULN_BYTES)
+py-caseless-string-case-check${TAB}not region.islower()${TAB}region != region.lower()
+py-caseless-string-case-check${TAB}not code.isupper()${TAB}code != code.upper()
+py-caseless-string-case-check${TAB}not \"US-EAST-1\".islower()${TAB}\"US-EAST-1\" != \"US-EAST-1\".lower()
+py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"provider\", \"prov1der\")${TAB}\"explicitly-invalid\"
+py-negative-control-by-replace${TAB}re.sub(\"us-west-9\", \"??\", GOOD_HCL)${TAB}\"explicitly-invalid\"
+py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"datasource\", \"dat4source\")${TAB}\"explicitly-invalid\""
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
-  NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)"
+  NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)
+py-caseless-string-case-check${TAB}not \"US-EAST-1\".islower()${TAB}not \"MIXED-Case-9\".islower()
+py-negative-control-by-replace${TAB}\"prov1der\"${TAB}\"someOtherReplacement\""
 
   # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
   # this whole gate stays green while proving nothing about it.

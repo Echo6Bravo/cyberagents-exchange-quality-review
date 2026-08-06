@@ -1,0 +1,74 @@
+# Dimension 11 (tests & CI), case-assertion correctness. No applicable CWE -- this is a wrong-
+# predicate defect, not a vulnerability class, and labelling it CWE-20 would be the "wrong-but-
+# official-looking" misdirection the rubric warns about.
+#
+# WHY THIS EXISTS. `str.islower()` returns False when the string contains NO CASED CHARACTERS AT
+# ALL, so it does not mean "is lowercase". Measured (python3, this machine):
+#
+#     "us-east-1".islower()      -> True     "123".islower()          -> False
+#     "us_east_1".islower()      -> True     "111111111111".islower() -> False
+#     "alpha-beta".islower()     -> True     "".islower()             -> False
+#
+# The correct predicate is `value == value.lower()`, which is True for all six. So a guard written
+# as `if not region.islower(): raise` REJECTS every all-digit and empty value -- and a test written
+# as `assert not "US-EAST-1".islower()` passes for a reason unrelated to its claim: it would pass
+# just as happily against "123".
+#
+# SEVERITY IS LOCATION-DEPENDENT, AND THE SWING IS TWO ROWS. This rule cannot tell the two apart,
+# so it emits one severity and states both in the message:
+#   * in a GUARD or validator (the construct decides accept/reject) -> HIGH. It is a live
+#     correctness bug: real inputs are rejected, or worse, an all-digit value takes the "not
+#     lowercase" branch and gets normalized/rewritten when it should have passed through.
+#   * in a TEST assertion -> MEDIUM. Nothing ships broken, but the test does not test its claim,
+#     which is dimension 11's whole subject: it will keep passing after the code it guards breaks.
+# Triage decides which; do not report the rule's WARNING as the finding's severity.
+#
+# KNOWN FALSE POSITIVES (measured -- triage by reading; do NOT "fix" these without updating this
+# list and the matching fixture lines, which are locked together by `semgrep test`):
+#   * a genuinely case-only decision on a value already known to be alphabetic -- the
+#     `word.isalpha() and word.islower()` conjunction is excluded, but the same guarantee
+#     established several lines earlier is not visible to this rule.
+#   * `.islower()` on a value that cannot be digits-only by construction (an enum member's name, a
+#     hardcoded literal). Still worth a glance: "cannot be digits-only" is usually an assumption.
+#
+# KNOWN BLIND SPOTS:
+#   * `.isalpha()` / `.isdigit()` on a possibly-EMPTY string is the same defect class -- `""` makes
+#     both False. Deliberately NOT matched here: those two have many legitimate uses (parsing,
+#     tokenizing) where the empty case is already handled, so a rule would be mostly noise. It is
+#     dimension 11's prose question instead.
+#   * `.istitle()`, `.isnumeric()` and friends, same reasoning.
+#   * the correct-but-inverted `value.lower() != value` is fine and not matched, as intended.
+#
+# No `paths:` filter here, deliberately: the rule must fire in BOTH tests and guards, because the
+# guard case is the more severe of the two. Scoping it to test files would hide the High.
+rules:
+  - id: py-caseless-string-case-check
+    languages: [python]
+    severity: WARNING
+    message: >-
+      dim11: `.islower()`/`.isupper()` is not a case check -- it returns False for a string with no
+      cased characters, so "123".islower() is False and "us-east-1".islower() is True. Use
+      `value == value.lower()` (or `.upper()`). SEVERITY DEPENDS ON LOCATION, by two rubric rows:
+      in a guard or validator this is HIGH (all-digit and empty inputs are rejected, or take the
+      wrong branch); in a test assertion it is MEDIUM (the assertion passes without evaluating its
+      claim, and will keep passing after the code it guards breaks). Say which one you found.
+    metadata:
+      qr-dimension: 11
+      cwe: "no applicable CWE -- wrong-predicate defect, not a vulnerability class"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: $S.islower()
+          - pattern: $S.isupper()
+      # The conjunction that makes `.islower()` mean what it looks like: `.isalpha()` guarantees at
+      # least one character and all of them cased. Measured load-bearing -- removing these two
+      # reintroduces a finding on the `ok_guarded_by_isalpha` near-miss below.
+      - pattern-not-inside: $S.isalpha() and ...
+      - pattern-not-inside: ... and $S.isalpha()
+      # A formatting ternary is a display decision, not an assertion, and was a false positive.
+      # NOTE for anyone editing this: `pattern-not` here is INERT (measured -- identical findings
+      # with and without it). Only `pattern-not-inside` excludes it, because the match range is the
+      # inner `$S.islower()` call rather than the whole conditional expression. That distinction is
+      # not obvious and cost a measurement to find, which is why both branches are spelled out.
+      - pattern-not-inside: $A if $S.islower() else $B
+      - pattern-not-inside: $A if $S.isupper() else $B

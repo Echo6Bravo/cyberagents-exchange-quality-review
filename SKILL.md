@@ -318,6 +318,26 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     failed to downgrade a recipe, so recipes with recurring charges shipped in a default run). A
     tautology does not merely fail to catch bugs — it occupies the slot where the real assertion
     would have gone.
+    **A third shape: a negative control that passes only while the code is broken.** Distinct from a
+    tautology, which *cannot* fail; this one can, and does — the moment someone fixes the checker it
+    guards. It appears whenever the "invalid" input is *derived* from a valid one by an operation
+    that can silently do nothing: `str.replace(old, new)` and `re.sub(pat, repl, s)` return the
+    original **unchanged** when the needle is absent, no error raised, so the test hands the checker
+    a perfectly valid value and asserts rejection. Real case: twelve such tests, all green, all
+    inverted. Fix by asserting `old in text` before the mutation, or by constructing the invalid
+    value explicitly. Generalize the smell: **a fixture built by string-splitting on a delimiter
+    that also occurs in the data is a silently wrong fixture, and a mutation harness that fails for
+    the wrong reason is indistinguishable from one that works** — which is why any harness you build
+    here must assert that its mutation actually landed before believing the result it reports.
+    `semgrep-rules/py-negative-control-by-replace` catches the literal-needle forms; a needle held in
+    a parameter or computed at runtime is a documented blind spot, so read the negative controls too.
+    **And check that case-assertions assert what they appear to.** `str.islower()` is not "is
+    lowercase" — it returns `False` for a string with **no cased characters**, so `"123".islower()`
+    is `False` while `"us-east-1".islower()` is `True`. In a test that makes the assertion pass for a
+    reason unrelated to its claim (**Medium**); in a *guard* it is a live bug that rejects every
+    all-digit and empty value, or routes it down the wrong branch (**High**). Same construct, two
+    rubric rows apart — say which one you found, and note that `value == value.lower()` is the
+    predicate that means what it says. `semgrep-rules/py-caseless-string-case-check` flags both.
     **Synthetic-vs-live parity:** if every test runs on fixtures, note that fixtures
     encode the author's *assumptions* about the real system's shape — the exact place silent bugs
     hide; require at least one exercise against the real system (or a captured real response),

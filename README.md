@@ -130,7 +130,7 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `empty-relationship-scan.sh` | `LOOKUP.get(k) or set()` fallthroughs, where a *missing* relationship silently satisfies a gate | 1 |
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
 | `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
-| `semgrep-rules/` | Authored cross-language rules for shapes `ruff`/`bandit` cannot reach (JS/TS storage of credentials; a file write with no resolved containment guard) | 2, 8 |
+| `semgrep-rules/` | Authored cross-language rules for shapes `ruff`/`bandit` cannot reach (JS/TS storage of credentials; a file write with no resolved containment guard; `.islower()` used as a case check, which is `False` for `"123"`; a negative control whose "invalid" input is built by a `.replace()` that silently did nothing) | 2, 8, 11 |
 
 Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
 reading the code, never a confirmed defect, and **zero hits is never proof**. Each ships with tests,
