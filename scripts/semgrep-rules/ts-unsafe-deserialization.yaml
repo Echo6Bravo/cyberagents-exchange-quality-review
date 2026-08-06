@@ -1,0 +1,95 @@
+# Dimension 2 (injection). CWE-502, CWE-95.
+#
+# WHY THIS EXISTS, and why there is deliberately NO Python equivalent. `bandit` already owns the Python
+# constructs: B301 (`pickle.loads`) and B506 (`yaml.load` without `SafeLoader`). Adding Python rules
+# here would double-report every finding, which the toolkit's no-duplication rule forbids. TypeScript
+# has no coverage at all, and this is the language most Exchange MCP servers are written in.
+#
+# The caveat, stated because unstated coverage is the sin this skill audits others for: `bandit` is
+# OPTIONAL here. When it is missing, Python is exactly as uncovered as TypeScript was, and the run's
+# "degraded -- bandit not available" label is what carries that. Not unconditional coverage.
+#
+# WHY THESE FOUR CONSTRUCTS TOGETHER. They are one triage question -- "does a string from outside this
+# process become code or an object graph?" -- and one fix direction (parse to data, never to behaviour).
+# For a tool that reads scanned data, YAML is the realistic vector: config, IaC, Kubernetes manifests,
+# and CI workflows all arrive as YAML from a repo the tool did not write.
+#
+# ONE MEASURED SUBTLETY worth knowing before triaging a `yaml.load` hit: in js-yaml v4, bare
+# `yaml.load(text)` is SAFE by default (it uses the core schema, and `safeLoad` was removed as
+# redundant). So the defect is not "calls load" -- it is "opts back INTO the unsafe schema", which is
+# why the patterns require an explicit `schema:`. Measured: bare `yaml.load(t)` and
+# `schema: yaml.CORE_SCHEMA` both correctly do not match. A rule keyed on `yaml.load` alone would fire
+# on every correct call in every v4 codebase.
+#
+# MEASURED HIT RATE, so the claim is bounded rather than implied: 16 findings across 1138 real
+# first-and-third-party JS/TS files (392k lines, minified excluded). All 16 were real `eval` /
+# `new Function` calls -- no pattern misfires -- and all 16 were in VENDORED code: prototype.js, YUI,
+# socket.io, ace's worker, ExtJS, jenkins' `hudson-behavior.js`, and browser-extension content scripts.
+# Zero first-party hits. Two things follow. First, the rule is precise about the construct. Second, on a
+# repo that vendors a `.js` library this will produce a block of findings that are all the same
+# already-known fact about that library -- so scope the scan to first-party source, or expect to dismiss
+# them in bulk. That is a property of the corpus, not a defect in the rule.
+#
+# KNOWN FALSE POSITIVES (measured; triage by reading):
+#   * `DEFAULT_FULL_SCHEMA` genuinely needed to round-trip YAML tags the tool itself emitted. Rare, and
+#     the question to answer is whether the same code path ever reads a file it did not write.
+#   * `new Function(...)` in a template engine, a hot-path compiler, or a benchmark harness. Legitimate
+#     and reasonably common; the question is whether any part of the string crosses a trust boundary.
+#
+# KNOWN BLIND SPOTS:
+#   * an unsafe schema reached via a variable or a shared options object
+#     (`const OPTS = {schema: yaml.DEFAULT_FULL_SCHEMA}; yaml.load(t, OPTS)`) -- the `schema:` key is
+#     not at the call site for the pattern to see.
+#   * js-yaml v3's `yaml.load` (unsafe by DEFAULT in v3, safe in v4). This rule cannot tell which major
+#     version is installed, so on a v3 codebase every bare `yaml.load` is a defect it stays silent on.
+#     Check the pinned version in `package.json` before believing zero hits.
+#   * `vm.runInNewContext`, `vm.runInThisContext`, `setTimeout("code string")`, and dynamic `import()`
+#     of an attacker-influenced path. Each is code-from-string in a different vocabulary.
+#   * any deserializer behind a wrapper (`loadConfig(path)`), which is how this usually looks in real
+#     repos.
+rules:
+  - id: ts-unsafe-deserialization
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim2: untrusted input may become code or an arbitrary object graph. For a scanner this is a live
+      path, not a theoretical one -- YAML config, IaC, and CI workflows all come from a repo the tool
+      did not write. Dimension 2 rates this Critical when the input is attacker-influenced and the sink
+      executes (`eval`, `new Function`, `unserialize`), High for an unsafe YAML schema. Fix by parsing
+      to data only: `yaml.load(text)` with no schema override is already safe in js-yaml v4, and
+      `JSON.parse` for JSON. Note that in v4 bare `yaml.load` is safe -- the defect flagged here is
+      explicitly opting back into the unsafe schema. `bandit` covers the Python equivalents (B301,
+      B506) when installed; nothing else in this toolkit reads TypeScript.
+    metadata:
+      qr-dimension: 2
+      cwe: "CWE-502: Deserialization of Untrusted Data / CWE-95: Eval Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # `schema:` must be quoted -- an unquoted colon inside a `pattern:` value makes the whole
+          # rule file unparseable, and semgrep then reports findings:0 with the cause only in `errors`.
+          # That is a silent zero, and it is the documented gotcha this rule set exists to avoid.
+          - pattern: 'yaml.load(..., {..., schema: yaml.DEFAULT_FULL_SCHEMA, ...})'
+          - pattern: 'yaml.load(..., {..., schema: yaml.DEFAULT_SCHEMA, ...})'
+          # The bare-import spellings (`import { DEFAULT_FULL_SCHEMA } from "js-yaml"`).
+          - pattern: 'yaml.load(..., {..., schema: DEFAULT_FULL_SCHEMA, ...})'
+          - pattern: 'yaml.load(..., {..., schema: FULL_SCHEMA, ...})'
+          # node-serialize's `unserialize` executes embedded functions by design; there is no safe use.
+          - pattern: $Y.unserialize(...)
+          - pattern: eval($X)
+          - pattern: new Function(...)
+      # A string LITERAL is not untrusted input. Excluding these keeps the rule pointed at the trust
+      # boundary instead of at the function name -- measured to spare `eval("2 + 2")` and
+      # `new Function("return 1")` while still catching `new Function("a", "b", body)`, where a literal
+      # appears first but a variable follows.
+      #
+      # A WARNING FOR WHOEVER EDITS THE FIXTURE. These two exclusions interact with semgrep's constant
+      # propagation in a way that can silently disable this rule. An earlier fixture declared
+      # `const userSuppliedExpression: string = ""` as a stand-in for untrusted input; propagation
+      # resolved it to `""`, the exclusions matched, and `semgrep test` reported both `eval` defects as
+      # MISSING. A variable standing in for untrusted input must be genuinely unresolvable
+      # (`process.argv[2]`, `process.env.X`, a parameter) or the fixture disproves the rule it is
+      # supposed to prove. Same mechanism, opposite direction, as the sibling CORS and bind rules,
+      # where propagation ADDED matches nobody expected.
+      - pattern-not: eval("...")
+      - pattern-not: new Function("...")

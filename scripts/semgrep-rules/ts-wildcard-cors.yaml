@@ -1,0 +1,65 @@
+# Dimension 17 (access control & agent authority). CWE-942.
+#
+# WHY THIS EXISTS. Dimension 17 asks whether a served endpoint actually restricts who may reach it.
+# `Access-Control-Allow-Origin: *` on an MCP server or a local agent's HTTP surface means any web page
+# the operator visits can script requests to it. The endpoint usually has no authN of its own -- being
+# on localhost was the access control -- so the wildcard is the whole gate. `ruff`/`bandit` are
+# Python-only and cannot see the express/fastify code where this lives.
+#
+# Rated High rather than Medium when the endpoint exposes tools or scan data, per dimension 17: the
+# consequence is a drive-by request from an unrelated site invoking the agent's tools with the
+# operator's authority. Note that a wildcard cannot carry cookies (browsers forbid `*` with
+# credentials), so the exposure is the endpoint's *unauthenticated* surface -- which for a local MCP
+# server is typically all of it.
+#
+# NO FALSE-POSITIVE RATE IS CLAIMED. Against 1138 real JS/TS files this rule reported 0 findings, but
+# the corpus contains 0 occurrences of `Access-Control-Allow-Origin` -- so the zero measures the corpus,
+# not the rule. Validated on planted-defect fixtures only; do not report it as "0 false positives."
+#
+# KNOWN FALSE POSITIVES (measured; triage by reading):
+#   * `cors()` bare and `origin: true` are both flagged, and both are occasionally deliberate on a
+#     genuinely public read-only endpoint. Ask what the endpoint serves before dismissing; "it's only
+#     local" is not a mitigation here, it is the reason this matters.
+#   * `$APP.use(cors())` was measured firing on a LOCALLY-DEFINED function named `cors` (a real
+#     collision -- semgrep matches the name, not the import). This is why the bare-call branch is
+#     `$APP.use(cors())` rather than `cors()`: the unqualified form fired on `const i = cors()` where
+#     `cors` was a two-line local helper. The narrower form still matches every real middleware
+#     registration and is much less likely to collide.
+#
+# KNOWN BLIND SPOTS:
+#   * a wildcard in a reverse proxy, `vercel.json`, `netlify.toml`, nginx conf, or a cloud API-gateway
+#     config. Same defect, not a JS/TS construct. Check the deployment config separately.
+#   * the header value arriving from a PARAMETER, or from an expression semgrep cannot resolve
+#     (`process.env.ACAO ?? "*"`). Both measured NOT matched. Note the boundary carefully: a wildcard
+#     assigned to a local `const` one line earlier IS caught, because semgrep does constant
+#     propagation. An earlier draft of this header claimed all variable indirection was a blind spot;
+#     `semgrep test` disproved it on the fixture. Only unresolvable values are actually blind.
+#   * an origin *allowlist* that is effectively a wildcard because it reflects
+#     `req.headers.origin` back unvalidated. That is the same exposure with none of these spellings.
+#   * `Access-Control-Allow-Private-Network: true`, which is the header that specifically re-opens a
+#     localhost endpoint to public web pages.
+rules:
+  - id: ts-wildcard-cors
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim17: CORS is open to every origin. Any web page the operator visits can send requests to this
+      endpoint from their browser, with whatever authority the endpoint grants unauthenticated
+      callers -- which for a local agent or MCP server is usually everything. Dimension 17 rates this
+      High when the endpoint exposes tools or scan data. Fix by naming the specific origins allowed
+      (`origin: ["https://app.example.com"]`), and add authN rather than relying on the endpoint
+      being hard to find. Note a wildcard cannot carry cookies, so this is about the endpoint's
+      unauthenticated surface.
+    metadata:
+      qr-dimension: 17
+      cwe: "CWE-942: Permissive Cross-domain Policy with Untrusted Domains"
+      confidence: HIGH
+    pattern-either:
+      - pattern: $R.setHeader("Access-Control-Allow-Origin", "*")
+      - pattern: $R.header("Access-Control-Allow-Origin", "*")
+      - pattern: 'cors({..., origin: "*", ...})'
+      # `origin: true` is the reflect-any-origin switch -- the same exposure spelled as a boolean,
+      # and the spelling people reach for when they think they are being less blunt than `"*"`.
+      - pattern: 'cors({..., origin: true, ...})'
+      # Bare `cors()` defaults to `*`. Scoped to `.use(...)` deliberately; see the FP note above.
+      - pattern: $APP.use(cors())

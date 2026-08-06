@@ -112,7 +112,26 @@ Two deliberate constraints:
   frequently unreachable behind a corporate TLS proxy — and the config fetch has **no bounded
   timeout**, so a naive attempt can hang for minutes rather than failing fast.
 - **semgrep never duplicates bandit.** If bandit already catches a Python shape, there is
-  deliberately no semgrep rule for it. A duplicate finding is a bug in the rule set.
+  deliberately no semgrep rule for it. A duplicate finding is a bug in the rule set. This is why the
+  TLS, crypto, and deserialization rules are **TypeScript-only** — `bandit` owns B501, B311/B324, and
+  B301/B506 for Python. It is also why the skill states that coverage *conditionally*: `bandit` is
+  optional, so when it is absent Python is as uncovered as TypeScript was.
+
+**What the rules are measured against, stated as a bound rather than implied.** Every rule ships with
+its own fixture (`semgrep test` requires the reported lines to equal the annotated lines exactly, so
+unannotated near-misses are enforced true negatives), a documented false-positive list, and a
+documented blind-spot list. Beyond the fixtures, the set was run against **1138 real JS/TS files
+(~392k lines)**: 30 findings, all genuine instances of the flagged construct, in 15 files — 14 of
+which were vendored third-party libraries. Two honest caveats travel with that number, and the skill
+tells the assistant to repeat them rather than report a bare zero:
+
+- **Three rules found nothing because that corpus contains no instances of what they look for.** A
+  laptop's JS is mostly browser and CLI code, with no server TLS or bind configuration in it. That is
+  a true negative with no discriminating power, not a precision result.
+- **Vendored code dominates the hits.** All 16 `eval`/`new Function` findings were in prototype.js,
+  YUI, socket.io, and ace — correctly flagged, and all the same already-known fact about code the
+  submitter didn't write. Scope scans to first-party source, or a vendored bundle will make a review
+  look deeper than it is.
 
 Invocation (the two flags are not optional — without them a blocked update check adds ~90s):
 
@@ -130,7 +149,7 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `empty-relationship-scan.sh` | `LOOKUP.get(k) or set()` fallthroughs, where a *missing* relationship silently satisfies a gate | 1 |
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
 | `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
-| `semgrep-rules/` | Authored cross-language rules for shapes `ruff`/`bandit` cannot reach (JS/TS storage of credentials; a file write with no resolved containment guard; `.islower()` used as a case check, which is `False` for `"123"`; a negative control whose "invalid" input is built by a `.replace()` that silently did nothing) | 2, 8, 11 |
+| `semgrep-rules/` | **10 authored rules** for shapes `ruff`/`bandit` cannot reach — seven of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values. Plus two Python test-quality rules and one path-containment rule. | 2, 6, 8, 11, 13, 17 |
 
 Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
 reading the code, never a confirmed defect, and **zero hits is never proof**. Each ships with tests,
