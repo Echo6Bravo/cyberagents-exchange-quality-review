@@ -1,0 +1,50 @@
+# Dimension 8 (secrets handling). JS/TS only -- ruff and bandit cannot see this language at all,
+# so there is no overlap with them by construction.
+#
+# Why this is a finding: localStorage and chrome.storage.local are readable by any script running
+# in the origin (including any injected/compromised dependency) and persist indefinitely with no
+# expiry. A bearer token, API key, or refresh token there is a lasting credential leak, not a
+# caching choice. Session storage in memory, or an httpOnly cookie, is the fix.
+#
+# AUTHORING GOTCHA -- a `pattern:` whose value contains a colon MUST be quoted. Unquoted, the YAML
+# parses as a nested mapping, the rule silently fails to load, and semgrep reports `findings: 0`
+# with the real cause buried in its `errors` array. That is a silent zero -- exactly the failure
+# class dimension 1 exists to catch -- so it is caught here by the Gate 3 validity check rather
+# than trusted to reviewer attention.
+rules:
+  - id: ts-token-in-localstorage
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim8: credential-shaped value written to persistent web storage. localStorage /
+      chrome.storage.local is readable by any script in the origin and never expires -- use an
+      httpOnly cookie or keep it in memory for the session.
+    metadata:
+      qr-dimension: 8
+      cwe: "CWE-522: Insufficiently Protected Credentials"
+      confidence: HIGH
+    pattern-either:
+      # localStorage.setItem("...token...", v) / sessionStorage -- key names the credential.
+      - patterns:
+          - pattern-either:
+              - pattern: localStorage.setItem($KEY, ...)
+              - pattern: sessionStorage.setItem($KEY, ...)
+              - pattern: window.localStorage.setItem($KEY, ...)
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: (?i).*(token|secret|password|passwd|api[-_]?key|apikey|credential|auth|bearer|refresh|private[-_]?key|session[-_]?id).*
+      # localStorage.token = v  (property-assignment form)
+      - patterns:
+          - pattern-either:
+              - pattern: localStorage[$KEY] = ...
+              - pattern: window.localStorage[$KEY] = ...
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: (?i).*(token|secret|password|passwd|api[-_]?key|apikey|credential|auth|bearer|refresh|private[-_]?key).*
+      # chrome.storage.local.set({ accessToken: v }) -- extension equivalent, same exposure.
+      - patterns:
+          # QUOTED deliberately: the `$KEY: $V` colon would otherwise parse as a YAML mapping.
+          - pattern: "chrome.storage.local.set({..., $KEY: $V, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: (?i).*(token|secret|password|passwd|api[-_]?key|apikey|credential|auth|bearer|refresh|private[-_]?key).*
