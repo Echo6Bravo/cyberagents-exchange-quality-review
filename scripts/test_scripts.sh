@@ -115,6 +115,40 @@ rm -rf "$W"
 # H -- usage surface, matching the other scanners.
 "$TS" --help >/dev/null 2>&1; chk $? 0 "--help -> rc0"
 
+echo "== setup.sh --check =="
+SETUP="$HERE/../setup.sh"
+# Every tool in TOOLS must appear in the report. Four hand-maintained lists used to have to agree;
+# this asserts the single-source-of-truth actually holds, so a tool can't install-but-never-report.
+out=$(bash "$SETUP" --check 2>&1); chk $? 0 "--check -> rc0"
+for t in gitleaks ruff bandit shellcheck actionlint semgrep; do
+  echo "$out" | grep -qE "\[(present|MISSING)\] $t\b" \
+    && { echo "  [PASS] reports $t"; pass=$((pass+1)); } \
+    || { echo "  [FAIL] $t absent from report"; fail=$((fail+1)); }
+done
+# semgrep must never be reported as bare "present" -- an engine with no rules is not coverage.
+if command -v semgrep >/dev/null 2>&1; then
+  echo "$out" | grep -q 'rules\|NO rules loadable' \
+    && { echo "  [PASS] semgrep coverage state qualified"; pass=$((pass+1)); } \
+    || { echo "  [FAIL] semgrep reported without a rules-state qualifier"; fail=$((fail+1)); }
+fi
+# --check must install nothing: stub the installers so any call is a hard failure.
+W=$(mktemp -d "${TMPDIR:-/tmp}/stub.XXXXXX")
+for b in brew pipx pip3; do printf '#!/bin/sh\necho "VIOLATION $*"\nexit 1\n' > "$W/$b"; chmod +x "$W/$b"; done
+PATH="$W:$PATH" bash "$SETUP" --check 2>&1 | grep -q VIOLATION \
+  && { echo "  [FAIL] --check attempted an install"; fail=$((fail+1)); } \
+  || { echo "  [PASS] --check installs nothing"; pass=$((pass+1)); }
+rm -rf "$W"
+# A tool whose --version hangs must not stall the report. Guards the timeout backstop; without it
+# `semgrep --version` alone hung the whole command indefinitely on a blackholed network.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  W=$(mktemp -d "${TMPDIR:-/tmp}/stub.XXXXXX")
+  printf '#!/bin/sh\nsleep 120\n' > "$W/ruff"; chmod +x "$W/ruff"
+  PATH="$W:$PATH" bash "$SETUP" --check 2>&1 | grep -q 'version probe timed out' \
+    && { echo "  [PASS] hanging --version degrades, not hangs"; pass=$((pass+1)); } \
+    || { echo "  [FAIL] no timeout backstop on version probe"; fail=$((fail+1)); }
+  rm -rf "$W"
+fi
+
 echo ""
 echo "helper-script tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
