@@ -107,6 +107,18 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   two flags are not optional — without them a blocked version check adds ~90s per invocation.
   If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
   as a tool that ran.
+  **A clean zero from a test-scoped rule is meaningless until you override the built-in ignore
+  list.** Semgrep's bundled `.semgrepignore` excludes `tests/` by default and announces it only on
+  **stderr** — the JSON `paths.skipped` array stays empty and the exit code stays 0, so a
+  test-quality rule reports "no findings" against a repo full of them. Measured on 1.172.0: naming
+  the test **directory** as an extra target does **not** help in a git repo (the git-tracked-files
+  filter drops it again), and `--no-git-ignore`, `--project-root`, and `--novcs` do not help
+  either. Two things do work — pick by whether you may write to the target:
+  name the test **files** explicitly as extra targets (`... <target> <target>/tests/test_a.py`),
+  which bypasses it where directories do not; or put an empty `.semgrepignore` in the target's own
+  root, which is only appropriate on a repo you own. Either way **read stderr for
+  `Files matching .semgrepignore patterns: N`** and report a nonzero N as reduced coverage, not as
+  a clean result.
 - **Shell:** `shellcheck -S warning` on every `*.sh`.
 - **GitHub Actions:** `actionlint` on every workflow (catches invalid inputs before a failed run).
 - **Deep SAST:** **CodeQL** — best run as a GitHub Actions workflow (`github/codeql-action`,

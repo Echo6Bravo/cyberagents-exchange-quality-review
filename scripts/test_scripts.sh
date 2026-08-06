@@ -385,6 +385,63 @@ YAML
   tv=$(mut_verdict "${tb%%|*}" "$(scan_lines "$W/taut.yaml" "$W/g.ts")" one)
   chk "$([ "$tv" = "OK" ] && echo OK || echo caught)" "caught" "gate5-self: a file-matching (tautological) rule is caught ($tv)"
   rm -rf "$W"
+
+  # ---- Gate 6: the `.semgrepignore` silent zero. --------------------------------------------
+  # semgrep's BUNDLED ignore list excludes `tests/`. It says so only on stderr: the JSON
+  # `paths.skipped` array stays EMPTY, `errors` stays empty, and rc stays 0 -- so a test-scoped
+  # rule reports a clean zero against a repo full of defects. Every measurement below is against
+  # a real `git init` repo, because that is the only case that matters (the skill reviews real
+  # repos) AND the only case where the workaround differs: in a NON-git directory naming the test
+  # DIRECTORY as an extra target is enough, but in a git repo the git-tracked-files filter drops
+  # it again. Measured non-fixes, all kept as assertions below so a future semgrep release that
+  # changes any of them fails here loudly instead of silently widening coverage:
+  #   --no-git-ignore / --project-root / --novcs / naming the tests DIRECTORY / --include tests
+  # The two that DO work: naming test FILES explicitly, or an empty .semgrepignore in the
+  # target's own root (only appropriate on a repo you own -- hence both are documented).
+  W=$(mktemp -d "${TMPDIR:-/tmp}/sgi.XXXXXX")
+  mkdir -p "$W/repo/tests"
+  ( cd "$W/repo" \
+    && git init -q . \
+    && git config user.email t@example.invalid \
+    && git config user.name t \
+    && printf 'def s():\n    MARKER_CALL(1)\n' > src.py \
+    && printf 'def t():\n    MARKER_CALL(2)\n' > tests/test_a.py \
+    && git add -A && git commit -qm init ) >/dev/null 2>&1
+  cat > "$W/probe.yaml" <<'YAML'
+rules:
+  - id: probe-marker
+    pattern: MARKER_CALL(...)
+    message: planted marker
+    languages: [python]
+    severity: ERROR
+YAML
+  # Assert the fixture itself is sound before drawing conclusions from a zero -- an unscanned or
+  # erroring target also reports "no findings", which is the exact confusion this gate is about.
+  ig_base=$(scan_lines "$W/probe.yaml" "$W/repo")
+  chk "$(printf '%s' "$ig_base" | cut -d'|' -f3)" "0" "gate6-pre: baseline scan is error-free"
+  chk "$(printf '%s' "$ig_base" | cut -d'|' -f2)" "1" "gate6-pre: baseline scanned src.py only (tests/ silently dropped)"
+  # scan_lines cannot express multi-target or extra-flag invocations, so count findings directly.
+  # `grep -c` on the JSON would count the rule id in metadata too; parse instead.
+  ig_hits(){ # $@ = extra args + targets -> number of findings
+    semgrep scan --config "$W/probe.yaml" --metrics=off --disable-version-check --json "$@" 2>/dev/null \
+    | python3 -c 'import json,sys
+raw=sys.stdin.read()
+try: print(len((json.loads(raw).get("results") or [])))
+except Exception: print(-1)'
+  }
+  chk "$(ig_hits "$W/repo")" "1" "gate6: tests/ defect is MISSED by default (the silent zero)"
+  chk "$(ig_hits --no-git-ignore "$W/repo")" "1" "gate6: --no-git-ignore does NOT override it"
+  chk "$(ig_hits --project-root "$W/repo" "$W/repo")" "1" "gate6: --project-root does NOT override it"
+  chk "$(ig_hits "$W/repo" "$W/repo/tests")" "1" "gate6: naming the tests DIRECTORY does NOT override it (git repo)"
+  chk "$(ig_hits "$W/repo" "$W/repo/tests/test_a.py")" "2" "gate6: naming test FILES explicitly DOES find it"
+  : > "$W/repo/.semgrepignore"
+  chk "$(ig_hits "$W/repo")" "2" "gate6: an empty .semgrepignore in the TARGET root finds it"
+  # The other half of the gate, same argument as gate4: remove the override and the defect must go
+  # back to being missed. Without this the two passing checks above could both be passing for some
+  # unrelated reason and the gate would be decorative.
+  rm -f "$W/repo/.semgrepignore"
+  chk "$(ig_hits "$W/repo")" "1" "gate6: removing the override restores the silent zero (gate is real)"
+  rm -rf "$W"
 fi
 
 echo ""
