@@ -66,13 +66,75 @@ cite-your-basis / raise-never-lower / CWE-is-optional rules stay stated, and tha
 review keeps severity labels inside the Defects bucket only.
 
 For each dimension it **actually runs a probe** (adversarial input, a container, a scanner)
-rather than reasoning about it. It leans on a standard toolkit where available —
-**gitleaks** (full-history secret scan), **ruff** + **bandit** (Python lint/SAST),
-**shellcheck**, **actionlint**, and **CodeQL** (as a GitHub Action) — and treats each as a
-CI gate that must stay green.
+rather than reasoning about it, and treats each tool as a CI gate that must stay green.
 
 See [`examples/sample-review.md`](examples/sample-review.md) for what a run's output looks
 like.
+
+## The toolkit — who covers what
+
+Each tool owns a lane. The point is **no overlap**: two tools reporting the same defect twice
+inflates a finding count and makes a review look deeper than it is.
+
+| Tool | Lane | Notes |
+|---|---|---|
+| **gitleaks** | Secrets, **full git history** | A secret in an old commit is still leaked; `fetch-depth: 0` in CI |
+| **ruff** | Python lint / correctness | Fast; the `S` (flake8-bandit) rules are **deliberately not enabled** — see below |
+| **bandit** | Python security (SAST) | Owns Python security outright, e.g. `verify=False` → B501 |
+| **semgrep** | **Everything Python tools can't reach — JS/TS above all** | This skill's **own rules only**; see below |
+| **shellcheck** | Shell scripts | `-S warning` |
+| **actionlint** | GitHub Actions workflows | Catches invalid inputs before a failed run |
+| **CodeQL** | Deep dataflow/taint | Run as a **GitHub Action**, not locally — the CLI usually can't fetch query packs behind a corporate TLS proxy |
+
+**Why `ruff`'s `S` rules stay off:** they are a port of bandit's checks (`S501` ≡ `B501`). Enabling
+them alongside `bandit` would report every Python security finding twice. `bandit` keeps that lane.
+
+### How semgrep fits — and the one thing to know before installing it
+
+semgrep exists here to cover **JS/TS**, which `ruff` and `bandit` cannot see at all. That gap
+matters: a large share of Exchange listings are TypeScript MCP servers, so without it those repos
+got `gitleaks` plus a human read and nothing else.
+
+**Installing semgrep is not the same as gaining coverage.** It ships **no bundled security rules** —
+out of the box it is an engine with nothing to run. So this skill reports it in **three** states, and
+`bash setup.sh --check` tells you which one you're in:
+
+| State | What the review can claim |
+|---|---|
+| `[MISSING] semgrep` | Nothing. JS/TS dimensions run in degraded (manual) mode. |
+| `[present]` → *engine present but NO rules loadable* | **Still nothing.** Counts as MISSING for coverage. |
+| `[present]` → *custom rules only: `scripts/semgrep-rules`* | Whatever those rules cover, and no more. |
+
+Two deliberate constraints:
+
+- **The hosted registry (`--config p/…`) is not used.** Rules are authored in-repo so their severity
+  mapping matches this skill's rubric, and so every rule maps to a numbered dimension. It is also
+  frequently unreachable behind a corporate TLS proxy — and the config fetch has **no bounded
+  timeout**, so a naive attempt can hang for minutes rather than failing fast.
+- **semgrep never duplicates bandit.** If bandit already catches a Python shape, there is
+  deliberately no semgrep rule for it. A duplicate finding is a bug in the rule set.
+
+Invocation (the two flags are not optional — without them a blocked update check adds ~90s):
+
+```bash
+semgrep scan --config scripts/semgrep-rules --metrics=off --disable-version-check <target>
+```
+
+### Probes this skill ships itself
+
+For bug classes no off-the-shelf scanner covers, in `scripts/`:
+
+| Script | Finds | Dim |
+|---|---|---|
+| `mutation-check.sh` | A regression test that passes with **and without** the fix — reverts the fix and requires the test to fail | 11 |
+| `empty-relationship-scan.sh` | `LOOKUP.get(k) or set()` fallthroughs, where a *missing* relationship silently satisfies a gate | 1 |
+| `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
+
+The last two are **heuristics**: every hit is a question to answer by reading the code, never a
+confirmed defect, and **zero hits is never proof**. Each ships with tests, documented false
+positives, and documented blind spots. `tautology-scan.sh` covers the shape `mutation-check.sh`
+structurally cannot: when the escape hatch is in the *test*, no mutation of the code under test
+changes the result.
 
 ## Install
 
@@ -99,12 +161,18 @@ coverage level up front (which tools ran, which dimensions are degraded). For th
 review, install the toolkit in one step:
 
 ```bash
-bash setup.sh          # installs gitleaks, ruff, bandit, shellcheck, actionlint (Homebrew/pipx)
+bash setup.sh          # installs gitleaks, ruff, bandit, shellcheck, actionlint, semgrep
 bash setup.sh --check  # just report what's present/missing, install nothing
 ```
 
-Or install manually: `brew install gitleaks ruff shellcheck actionlint` and
+Or install manually: `brew install gitleaks ruff shellcheck actionlint semgrep` and
 `pipx install bandit`.
+
+**semgrep is reported as three states, not two.** It ships no bundled security rules, so the binary
+being present says nothing about coverage. This skill drives it with **only its own rules** in
+`scripts/semgrep-rules` — the hosted registry (`--config p/…`) is not used, and is often
+unreachable behind a corporate TLS proxy anyway. `setup.sh --check` tells you which state you're
+in: missing, present-but-no-rules (**contributes no coverage**), or present with the skill's rules.
 
 **CodeQL is deliberately not installed locally.** It runs best as a GitHub Actions workflow
 (`github/codeql-action`) on the repository you're reviewing — free for public repos, nothing

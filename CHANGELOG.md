@@ -4,6 +4,46 @@ All notable changes to this skill are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`scripts/tautology-scan.sh`** — heuristic grep over *test files* for assertions carrying an
+  `or not <precondition>` escape hatch (dimension 11). This is the tautology shape
+  `mutation-check.sh` structurally cannot find: the escape lives in the test, so no mutation to the
+  code under test changes the outcome. Verified on the four shapes it must catch and four negative
+  controls; measured against two real repos (1 hit across 11 test files, 0 in a repo with none),
+  and that single hit is a documented question-not-a-defect. Known false positives and two known
+  blind spots (an `or not` wrapped onto a continuation line, and assertions over derived
+  properties) are documented in the script header and **locked by tests**, so widening the regex
+  fails CI until the header is updated in the same commit.
+- **Dimension 11 gains both tautology shapes in prose**: the `or not` escape hatch, and assertions
+  over a *derived* property (`@property`, `cached_property`, getter, serializer formula), which
+  re-implement the derivation and pass on every input. The second is deliberately not automated —
+  it needs a human to answer "is this field authored data or computed?".
+
+- **`setup.sh` installs and reports `semgrep`**, as a **three-state** tool: missing /
+  present-but-no-rules (**reported as contributing no coverage**) / present with the skill's own
+  rules. semgrep ships no bundled security rules, so "binary present" is not coverage — reporting
+  it as present-and-done would be exactly the overclaiming this skill flags in others. The state is
+  determined by looking for `scripts/semgrep-rules`, **not** by probing the network: `curl` can
+  reach `semgrep.dev` while semgrep's own fetch still fails (different trust stores), and the
+  config fetch has no bounded timeout.
+
+### Changed
+- The shipped-helper directives and the CI comment no longer hardcode how many scripts ship
+  ("these two" → "every script in `scripts/`"), so adding a scanner cannot leave a stale count.
+- `setup.sh` now derives its brew list, its non-brew fallback list, and its status report from a
+  single `TOOLS` variable. Previously four hand-maintained copies had to agree; editing one without
+  the others meant a tool could install but never appear in the coverage report.
+
+### Fixed
+- `setup.sh --check` could **hang indefinitely**: it ran `<tool> --version` for each tool, and
+  `semgrep --version` performs a network update check that never returns on a network that
+  blackholes it (measured: >90s, no output, until killed). Version probes now pass
+  `--disable-version-check` for semgrep and are wrapped in a 10s timeout for every tool, so one
+  unresponsive binary degrades to `version probe timed out` instead of stalling the report.
+  Verified with a stub whose `--version` sleeps 300s: the report completed in 14s.
+
 ## [1.1.0] — 2026-08-04
 
 ### Added

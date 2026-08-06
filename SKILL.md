@@ -36,10 +36,15 @@ First, check which scanners are available and tell the user the resulting covera
 verdict is never trusted beyond what actually ran. Run `bash setup.sh --check` if the repo has
 it, else probe directly:
 ```bash
-for t in gitleaks ruff bandit shellcheck actionlint; do
+for t in gitleaks ruff bandit shellcheck actionlint semgrep; do
   command -v "$t" >/dev/null 2>&1 && echo "present: $t" || echo "MISSING: $t"
 done
 ```
+**`semgrep` present is NOT semgrep coverage.** It ships no bundled security rules, so an install
+with no rules contributes nothing. Report it as three states: MISSING / present-but-no-rules
+(**counts as MISSING for coverage**) / present with `scripts/semgrep-rules`. Do **not** try
+`--config p/<pack>` to find out: the registry fetch has no bounded timeout and can hang for
+minutes on a TLS-intercepting network. Check for the rules directory instead.
 Then state, up front, something like: *"Running with gitleaks+ruff+bandit present; shellcheck
 and actionlint MISSING → the shell and workflow dimensions run in degraded (manual) mode."*
 Offer to install missing tools (`bash setup.sh`, or `brew install …` / `pipx install bandit`)
@@ -49,8 +54,9 @@ stays missing, run that dimension's documented fallback and **label the finding 
 target repo, not a local install (see the toolkit note).
 
 **Shipped helper scripts — run them WHEN THEIR PRECONDITIONS HOLD; skip-with-a-note otherwise.**
-These two are part of the review by default, but only when they apply — forcing a tool that
-doesn't fit is exactly the overreach this skill warns others against (dim 3: degrade gracefully).
+Every script in `scripts/` is part of the review by default, but only when it applies — forcing a
+tool that doesn't fit is exactly the overreach this skill warns others against (dim 3: degrade
+gracefully).
 Decide per target, and state the decision out loud like any other coverage call:
 - **`scripts/empty-relationship-scan.sh <target>` (dimension 1).** Run it **if** the target has
   source in a supported language (`.py/.js/.ts/.jsx/.tsx/.go/.rb/.sh/.java`). Triage every hit as
@@ -58,6 +64,14 @@ Decide per target, and state the decision out loud like any other coverage call:
   confirmed bug. If the language isn't covered or it flags nothing, **say so and note it is not
   proof of safety** — still write the real empty-input test. Cheap (grep-only); default to running
   it whenever any supported source exists.
+- **`scripts/tautology-scan.sh <target>` (dimension 11).** Run it **if** the target ships tests in
+  `.py/.js/.ts/.jsx/.tsx/.rb`. It greps *test files only* for assertions carrying an
+  `or not <precondition>` escape hatch — the shape `mutation-check.sh` structurally cannot find,
+  because no mutation to the code under test changes the outcome. Triage every hit as a *question*
+  (is the right-hand side false in the fixture? then the left-hand claim never ran). Cheap
+  (grep-only); default to running it whenever test files exist. It is **line-based**: a wrapped
+  `or not` continuation and any assertion over a *derived* property are invisible to it, so zero
+  hits is not proof — see dimension 11.
 - **`scripts/mutation-check.sh` (dimension 11).** For each regression test backing a fixed finding,
   run it to prove the test FAILS on revert — **only if all preconditions hold:** (a) a runnable
   test command exists; (b) it is fast and **side-effect-free** (no live tenant/API token, no
@@ -67,19 +81,32 @@ Decide per target, and state the decision out loud like any other coverage call:
   guard — **do NOT force it**: note that the guard was verified by reasoning, not mechanically, and
   say which precondition blocked it. Never fabricate a test command just to run it.
 
-Treat both like the scanners above: their absence or non-applicability is a *labeled coverage gap*,
+Treat each like the scanners above: its absence or non-applicability is a *labeled coverage gap*,
 never a silent skip and never a reason to overstate what was checked.
 
 ## Standard toolkit — RUN these, don't eyeball
 Run whatever of these the language/stack supports; treat findings as input to the relevant
 dimension, not a substitute for it. Install only with the user's approval (`bash setup.sh`).
 - **Secrets:** `gitleaks git --no-banner --redact .` over **full history** (fetch-depth 0 in CI).
-- **Python lint/SAST:** `ruff check .` and `bandit -r .`. B101 (assert) is commonly skipped
+- **Python lint/SAST:** `ruff check .` and `bandit -r .`. Leave ruff's `S` (flake8-bandit) rules
+  **off** — they are a port of bandit's checks (`S501` ≡ `B501`), so enabling them here would
+  report every Python security finding twice and inflate the count. `bandit` owns that lane.
+  B101 (assert) is commonly skipped
   because asserts in *tests* are intentional — scope the skip to tests rather than suppressing
   it repo-wide. In library/runtime code an `assert` is **not** a guard: `python -O` strips it,
   so an assert-protected invariant is unenforced in exactly the optimized build where violating
   it does damage. Any assert that validates external input or protects a security decision is a
   finding; raise a real exception instead.
+- **Cross-language patterns:** `semgrep scan --config scripts/semgrep-rules --metrics=off
+  --disable-version-check <target>`. **Only ever this skill's own rules** — never `--config p/<pack>`
+  (the hosted registry is not part of this toolkit and the fetch can hang for minutes behind a TLS
+  proxy). Its job is the languages `ruff`/`bandit` don't reach — **JS/TS especially**, which matters
+  because many Exchange listings are TypeScript MCP servers. It is **additive, never a replacement**:
+  where `bandit` already covers a Python shape (e.g. `verify=False` = B501), the rule set
+  deliberately has no rule, so a duplicate finding is a bug in the rules, not a second opinion. The
+  two flags are not optional — without them a blocked version check adds ~90s per invocation.
+  If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
+  as a tool that ran.
 - **Shell:** `shellcheck -S warning` on every `*.sh`.
 - **GitHub Actions:** `actionlint` on every workflow (catches invalid inputs before a failed run).
 - **Deep SAST:** **CodeQL** — best run as a GitHub Actions workflow (`github/codeql-action`,
@@ -93,6 +120,11 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
 - **Empty/absent-relationship smell (this skill ships it):** `scripts/empty-relationship-scan.sh`
   is a heuristic grep for `LOOKUP.get(k) or set()`-style fallthroughs that can leak a
   missing relationship past a gate (dimension 1). Hits are questions, not confirmed bugs.
+- **Vacuous-assertion smell (this skill ships it):** `scripts/tautology-scan.sh` is a heuristic grep
+  over *test files* for `assert … or not <precondition>` escape hatches — assertions that pass
+  without evaluating their real claim (dimension 11). Complements `mutation-check.sh`, which cannot
+  detect this shape. Hits are questions; zero hits is not proof (it misses wrapped continuations
+  and derived-property assertions).
 Every one of these should also be a **CI gate** so it can't regress (see dimension 11).
 
 ## Dimensions (in priority order — customer-impact first)
@@ -217,7 +249,28 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     actually flips to FAIL — a test that passes both with and without the fix asserts nothing
     (e.g. it asserts on a string that also appears in static output). `scripts/mutation-check.sh`
     mechanizes this (runs the test clean → mutates the guarded file → requires the test to fail →
-    restores). **Synthetic-vs-live parity:** if every test runs on fixtures, note that fixtures
+    restores).
+    **Two tautology shapes mutation testing cannot reach — look for these by reading.**
+    *(a) The `or not <precondition>` escape hatch.* `assert "AWS docs" in out or not any(r.docs_url
+    for r in pairs)` passes whenever no fixture row has a `docs_url` — the right side is always
+    true, the real claim on the left never evaluates, and it reads as coverage of the feature. No
+    mutation to the code under test changes this, because the escape is in the *test*.
+    `scripts/tautology-scan.sh` greps for it; hits are questions (ask whether the precondition is
+    false in the fixture). Fix by asserting the precondition separately, or use a fixture where it
+    holds. *(b) An assertion over a DERIVED property.* When a test asserts a `@property`,
+    `cached_property`, getter, or serializer formula, it re-implements the derivation and passes on
+    every input — including wrong ones. Real case: four of five assertions about a `safety_tier`
+    property could not fail, because each one restated a term of the formula that computes it.
+    `mutation-check.sh` cannot express this: the mutation would have to target the *data the test
+    reads*, and the property recomputes from that data, so the assertion follows the mutation and
+    stays true. Not greppable either — it needs a human to answer **"is this field authored data or
+    computed?"**, which means reading the model definition. Assert on the *inputs* to the
+    derivation, or on something no derivation could produce. Worth the effort: rewriting that
+    tautology onto authored fields exposed a real bug it had been hiding (a `LOW` cost impact
+    failed to downgrade a recipe, so recipes with recurring charges shipped in a default run). A
+    tautology does not merely fail to catch bugs — it occupies the slot where the real assertion
+    would have gone.
+    **Synthetic-vs-live parity:** if every test runs on fixtures, note that fixtures
     encode the author's *assumptions* about the real system's shape — the exact place silent bugs
     hide; require at least one exercise against the real system (or a captured real response),
     especially for anything that queries an external schema/API.
