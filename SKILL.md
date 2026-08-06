@@ -7,7 +7,7 @@ description: >-
   robustness, scale limits, operational behavior, version portability, schema drift, leaked
   secrets (full git history), malicious/offensive behavior, undisclosed outbound calls,
   LLM/AI-specific risks, and execution-scope correctness in generated artifacts — and reports
-  findings ranked by severity BEFORE any public/Exchange push. Runs a standard toolkit (gitleaks, ruff, bandit, shellcheck, actionlint, CodeQL) and
+  findings ranked by severity BEFORE any public/Exchange push. Runs a standard toolkit (gitleaks, ruff, bandit, semgrep, shellcheck, actionlint, CodeQL) and
   mirrors the live Exchange reviewer checklist. Use before shipping, submitting, or when asked
   "is this enterprise-ready / did we miss anything?".
 ---
@@ -117,6 +117,19 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   two flags are not optional — without them a blocked version check adds ~90s per invocation.
   If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
   as a tool that ran.
+  **Bound the claim to the rules that exist.** The set covers dimensions 2, 6, 8, 11, 13, and 17 —
+  not "JS/TS security." Ten rules, each with a documented blind-spot list in its own header; read the
+  header of any rule you cite before quoting it, because several deliberately trade recall for a hit
+  list a human will read (`ts-weak-hash-or-random` ignores bare `Math.random()`; `ts-binds-all-interfaces`
+  cannot see `listen(port)` with no host at all, which is the *commonest* real exposure).
+  **Report a zero against the corpus that produced it.** Measured on 1138 real JS/TS files: three of
+  these rules found nothing because that corpus contains **no instances of what they look for** — a
+  true negative with no discriminating power. "0 false positives" from such a run is an overclaim of
+  exactly the kind dimension 12 exists to catch; say "validated on planted-defect fixtures only."
+  **Scope the scan to first-party source when you can.** All 16 `ts-unsafe-deserialization` hits in
+  that measurement were in *vendored* libraries (prototype.js, YUI, socket.io, ace) — real `eval`
+  calls, correctly flagged, and all the same already-known fact about code the submitter did not write.
+  A finding count inflated by a vendored bundle makes a review look deeper than it is.
   **A clean zero from a test-scoped rule is meaningless until you override the built-in ignore
   list.** Semgrep's bundled `.semgrepignore` excludes `tests/` by default and announces it only on
   **stderr** — the JSON `paths.skipped` array stays empty and the exit code stays 0, so a
@@ -177,6 +190,13 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    (DOM-level / parser-level) that nothing executes.
    CodeQL's taint queries are the automated backstop — but the payload-injection probe is the
    primary proof; don't rely on the scanner alone.
+   *Deserialization is the same class with a different sink:* untrusted input that becomes **code or
+   an object graph**. `bandit` owns the Python constructs (B301 `pickle.loads`, B506 unsafe
+   `yaml.load`) — **when it is installed**, which is optional here, so credit that coverage
+   conditionally and label it degraded when absent. `semgrep-rules/ts-unsafe-deserialization` covers
+   the TS side. One thing to check before believing a clean YAML result: in **js-yaml v4** bare
+   `yaml.load(text)` is safe, but in **v3** it is not — read the pinned version in `package.json`,
+   because the rule matches an explicit unsafe `schema:` and stays silent on v3's unsafe default.
    - *A path is a sink.* A value that becomes part of a **path** — a filename, a directory, an
      archive entry, a storage key — is as much a sink as one that becomes shell, and its payloads
      are different: `../`, a leading `/`, `..` as a whole segment, a NUL, a trailing separator, a
@@ -257,6 +277,10 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    `curl --fail-with-body` needs 7.76+). No unpinned/absent third-party deps assumed present.
    **TLS must be verified** on all outbound traffic — never `CERT_NONE`/`verify=False`/
    `-k`, especially on requests carrying a credential (a silent MITM/credential-exposure bug).
+   `bandit` catches the Python form (B501) when installed; `semgrep-rules/ts-tls-verification-disabled`
+   catches the Node/TS one (`rejectUnauthorized: false`), which nothing else in the toolkit can parse.
+   Neither sees `NODE_TLS_REJECT_UNAUTHORIZED=0` in an env file, Dockerfile, or workflow — the more
+   common form in a containerized MCP server, and a plain grep away.
 
 7. **Schema/contract drift.** If the tool depends on an external schema (UDM/GraphQL/API), is
    there a canary that fails loud when a depended-on field is renamed/removed, rather than
@@ -272,6 +296,13 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    keystore / secret manager / vetted AEAD — never plaintext in a local DB or `config.json`,
    never browser `localStorage`/`chrome.storage.local`, never a home-rolled XOR scheme, and
    never passed on a command line (leaks to `ps`/shell history).
+   **And check how the credential was MADE, not only where it is kept.** A token minted from
+   `Math.random()` is guessable regardless of how well it is stored — the RNG is not a CSPRNG and its
+   state is recoverable from a few outputs. `bandit` covers the Python equivalents (B311 `random`,
+   B324 `md5`/`sha1`) when installed; `semgrep-rules/ts-weak-hash-or-random` covers TS. Expect this one
+   to be **mostly right about the construct and mostly wrong about the risk** — measured 13 of 14 real
+   hits were legitimate non-security uses (cache-busting, event-name suffixes, filenames). The
+   question is whether an attacker gains anything by predicting the value or finding a collision.
 
 9. **Malicious / offensive behavior (self-check — is the artifact itself safe?).** Confirm the
    tool is defensive, not weaponized: it does not exploit/move-laterally/exfiltrate, does not
@@ -378,6 +409,11 @@ frequently the highest-impact dimensions — not optional add-ons.
     is a real threat. **Prove it:** put an injected-instruction payload in a scanned field
     ("ignore prior instructions and …") and confirm the agent fences/ignores it. Untrusted
     content should be delimited/labeled as data, never merged into the instruction channel.
+    `semgrep-rules/ts-untrusted-data-in-llm-system-prompt` flags interpolation into the TS SDKs'
+    `system:` channel (Anthropic and OpenAI shapes). The triage question is **not** "is something
+    interpolated" but "can the owner of the scanned asset write any of it" — a resource *name* is
+    attacker-authored, a resource *count* is not. Zero hits proves little: a prompt assembled in a
+    variable and passed by name is invisible to it, which is how most real code is written.
 
 14. **AI data handling — at rest & vendor egress.** (a) Sensitive scan *output* written to
     disk (exposed-secret locations, PII/PHI, hostnames/IPs, identities, exposed IP:ports — an
@@ -401,6 +437,11 @@ frequently the highest-impact dimensions — not optional add-ons.
     state-changing routes, no debug endpoints in prod. MCP transport is authenticated. Every
     state-changing tool call (restart/unlink, tag/ACR write, scan launch, SSH/RCE, SQL, email
     send) is gated by an **enforced control**, not merely a prompt instruction or an env flag.
+    `semgrep-rules/ts-wildcard-cors` and `ts-binds-all-interfaces` catch the two spellings above in
+    JS/TS. Read the bind finding as a question about authN, not about the bind: a container legitimately
+    binds `0.0.0.0`, and the real defect is that nothing authenticates the caller once it does. **The
+    biggest gap here is an absence, so no scanner can flag it** — `listen(port)` with no host argument
+    is also all-interfaces on Node. Ask what the framework's default is; a clean scan does not answer it.
 
 18. **Supply-chain provenance.** Packages, container images, CI actions, and CDN assets are
     pinned to immutable versions/digests, with SRI on CDN `<script>`/`<link>`. No moving tags

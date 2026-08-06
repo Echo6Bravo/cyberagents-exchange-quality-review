@@ -21,6 +21,37 @@ All notable changes to this skill are documented here. The format follows
   re-implement the derivation and pass on every input. The second is deliberately not automated —
   it needs a human to answer "is this field authored data or computed?".
 
+- **`scripts/semgrep-rules/` — 10 authored rules**, each a rule + planted-defect fixture pair, covering
+  dimensions 2, 6, 8, 11, 13, and 17. Seven are **JS/TS**, which `ruff` and `bandit` cannot parse at
+  all: credentials in `localStorage`/`chrome.storage.local` (8), `rejectUnauthorized: false` (6),
+  wildcard CORS and `listen(…, "0.0.0.0")` (17), scanned data interpolated into an LLM `system:`
+  prompt in the Anthropic and OpenAI shapes (13), `eval`/`new Function`/an explicitly unsafe js-yaml
+  schema (2), and `md5`/`sha1`/`Math.random()` used for a security value (8). Two Python rules cover
+  test-quality shapes no scanner owns — `.islower()` used as a case check (`False` for `"123"`) and a
+  negative control whose "invalid" input is built by a `.replace()` that silently did nothing — plus
+  one for a file write with no resolved containment guard.
+  The hosted registry is **not** used: rules are local so each maps to a numbered dimension and to
+  this skill's severity rubric, and the registry is frequently unreachable behind a corporate TLS
+  proxy with no bounded timeout on the fetch. **No rule duplicates `bandit`** — which is why the TLS,
+  crypto, and deserialization rules are TypeScript-only, and why the skill now credits `bandit`'s
+  Python coverage (B301/B311/B324/B501/B506) *conditionally*, since it is an optional tool.
+  Every rule header documents its measured false positives and blind spots, and several deliberately
+  trade recall for a hit list a human will actually read (bare `Math.random()` is ignored on purpose).
+- **Six CI gates on the rules themselves**, because installing semgrep is not the same as gaining
+  coverage and every failure mode here is a *silent zero*. `semgrep test` exits 0 when it finds no
+  fixtures at all, and `semgrep validate` exits 0 while printing "Configuration is invalid" — so the
+  gates read output, never exit codes. Gate 4 proves the gates fire by breaking a rule with the
+  documented unquoted-colon gotcha and requiring the gates to fail. **Gate 5 applies dimension 11 to
+  the rules reflexively**: for each of 40 rows it mutates the fixture to remove one defect and
+  requires exactly one finding to disappear, plus negative-control rows that mutate an incidental
+  value and require the finding to *remain*. A rule that survives its own defect removal is matching
+  the file, not the defect — and Gate 5 has its own negative control proving it catches that.
+- **Measured false-positive bounds, stated as bounds.** Beyond the fixtures, the rules were run
+  against 1138 real JS/TS files (~392k lines): 30 findings in 15 files, all genuine instances of the
+  flagged construct, 14 of the 15 files vendored third-party code. Two caveats ship with that number
+  because a bare zero would overclaim: three rules found nothing on a corpus containing **no
+  instances of what they look for** (a true negative with no discriminating power), and vendored
+  bundles dominate the `eval`/`new Function` hits, so scans should be scoped to first-party source.
 - **`setup.sh` installs and reports `semgrep`**, as a **three-state** tool: missing /
   present-but-no-rules (**reported as contributing no coverage**) / present with the skill's own
   rules. semgrep ships no bundled security rules, so "binary present" is not coverage — reporting
