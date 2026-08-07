@@ -6,6 +6,19 @@
 # expiry. A bearer token, API key, or refresh token there is a lasting credential leak, not a
 # caching choice. Session storage in memory, or an httpOnly cookie, is the fix.
 #
+# MEASURED: 0 findings across 1074 TypeScript files from six real MCP servers (official `servers` and
+# `typescript-sdk`, context7, Figma-Context-MCP, mcp-server-cloudflare, playwright-mcp; 13 further files
+# failed to parse and were not analysed). That zero is VACUOUS and the reason is structural, not lucky:
+# the corpus contains **0 occurrences of `localStorage` or `sessionStorage`**, because an MCP server is
+# a Node process with no DOM and no web storage API to call.
+#
+# The consequence for reviewers is worth stating, because it is easy to get backwards: a zero from this
+# rule on an MCP-server submission is expected and means nothing. The rule earns its place on the
+# *browser-side* half of a submission -- an extension, a web dashboard, an OAuth callback page -- and if
+# a submission has no browser surface, this rule is N/A rather than passed. Reporting "no credential
+# storage issues found" after scanning only a Node server is an overstated coverage claim, which is
+# this skill's own dimension 12.
+#
 # AUTHORING GOTCHA -- a `pattern:` whose value contains a colon MUST be quoted. Unquoted, the YAML
 # parses as a nested mapping, the rule silently fails to load, and semgrep reports `findings: 0`
 # with the real cause buried in its `errors` array. That is a silent zero -- exactly the failure

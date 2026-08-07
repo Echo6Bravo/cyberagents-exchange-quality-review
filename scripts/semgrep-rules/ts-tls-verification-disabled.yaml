@@ -15,10 +15,22 @@
 # NO FALSE-POSITIVE RATE IS CLAIMED, and the reason is worth stating rather than hiding behind a zero.
 # Against 1138 real JS/TS files (392k lines) this rule reported 0 findings -- but that corpus contains 0
 # occurrences of `rejectUnauthorized` in any form, so the zero measures the corpus, not the rule. It is
-# a true negative with no discriminating power. The same applies to `ts-wildcard-cors` and
-# `ts-binds-all-interfaces`: browser and CLI code, which is what a laptop's JS corpus mostly is, has no
-# server-side TLS or bind configuration in it. Validated on planted-defect fixtures only. Say that in a
+# a true negative with no discriminating power. Validated on planted-defect fixtures only. Say that in a
 # review rather than reporting "0 false positives."
+#
+# CONFIRMED on a second, more relevant corpus: 0 findings across 1074 TypeScript files from six real MCP
+# servers (13 further files failed to parse and were not analysed) -- and that corpus also contains **0
+# occurrences of `rejectUnauthorized` or `NODE_TLS_REJECT_UNAUTHORIZED` in any form**. So this is once
+# again a vacuous zero: the construct is simply absent, twice over. This rule remains fixture-validated
+# only, and 1074 real files did nothing to change that.
+#
+# The sibling note about server-side code is now WRONG and worth correcting rather than deleting, since
+# it was the reasoning used to excuse two other zeros: `ts-wildcard-cors` and `ts-binds-all-interfaces`
+# both fired on this MCP corpus (13 and 8 findings). The explanation "a JS corpus has no server-side
+# config in it" was true of the browser-extension corpus and is false of MCP servers. For
+# `ts-binds-all-interfaces` the follow-up was sharper still: its zero here turned out to be a genuine
+# blind spot in the rule, not an empty corpus. A zero is only ever evidence once you have checked
+# whether the construct is present -- which is this repo's own dimension 1.
 #
 # KNOWN FALSE POSITIVES (measured; triage by reading):
 #   * a deliberately-insecure test fixture or a local-dev-only agent guarded by an env check. The

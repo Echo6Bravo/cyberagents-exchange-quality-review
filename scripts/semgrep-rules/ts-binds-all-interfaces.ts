@@ -5,6 +5,9 @@
 
 import express from "express";
 import * as http from "http";
+// The factory idiom the widened pattern targets. Imported so the fixture is real code rather than a
+// snippet -- the corpus measurement that motivated it came from this exact API.
+import { createMcpExpressApp } from "@modelcontextprotocol/express";
 
 const app = express();
 const PORT: number = Number(process.env.PORT ?? 3000);
@@ -32,9 +35,36 @@ export function serveViaLocalConst(): void {
   app.listen(PORT, host);
 }
 
+// The framework-FACTORY form, which has no `.listen` receiver at all. This is the shape that made the
+// rule wider: measured against 1074 real MCP-server TS files, this -- not `.listen()` -- is how the
+// current MCP TypeScript SDK and its middleware packages spell a broad bind, and the earlier
+// receiver-bound pattern missed all 8 real occurrences.
+// ruleid: ts-binds-all-interfaces
+const publicApp = createMcpExpressApp({ host: "0.0.0.0" });
+
+// Single quotes: the corpus uses them and semgrep normalizes quote style, so this matches. Annotated
+// because "it's a different quote" is exactly the kind of assumption worth pinning to a test.
+// ruleid: ts-binds-all-interfaces
+const singleQuoted = createMcpExpressApp({ host: '0.0.0.0' });
+
+// A broad bind PAIRED WITH an explicit host allowlist. Still annotated -- the rule flags it and should:
+// this is the documented "container that must bind broadly" false positive, and `allowedHosts` answers
+// DNS-rebinding, not "who may call these tools." Most real corpus hits looked exactly like this, so the
+// finding is a question ("what authenticates the caller?"), not a verdict.
+// ruleid: ts-binds-all-interfaces
+const guardedApp = createMcpExpressApp({ host: "0.0.0.0", allowedHosts: ["api.example.com"] });
+
 // OK: loopback. Must not match -- a pattern keyed on `.listen(` alone would flag this and punish the
 // correct spelling, which is the whole fix this rule recommends.
 app.listen(PORT, "127.0.0.1");
+
+// OK: the factory form bound to loopback. Guards the widened receiver-less pattern against becoming
+// "any call with a host option" -- it must still discriminate on the ADDRESS.
+const localApp = createMcpExpressApp({ host: "127.0.0.1" });
+
+// OK: a `host` option that is not an address literal at all. The widened pattern has no receiver
+// constraint, so this pins that it still cannot be satisfied by an unrelated `host:` key.
+const proxied = createMcpExpressApp({ host: process.env.HOST ?? "127.0.0.1" });
 
 // OK: the options-object form, bound correctly.
 server.listen({ host: "127.0.0.1", port: PORT });
