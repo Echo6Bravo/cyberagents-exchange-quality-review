@@ -151,6 +151,14 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   the metadata cannot tell you: several categories here are covered by prose, by a non-semgrep probe, or
   by `bandit`'s own rule ids, so an absent `owasp:` value means no *rule* maps to it, not that the
   dimension set misses it.
+  **Two framework areas are deliberately out of scope, and saying so is the point.** *Retrieval and
+  vector/embedding internals* — index tenancy, embedding inversion, retrieval-time access control — are
+  **not assessed** unless the listing actually ships a RAG index or vector store, in which case say the
+  review did not cover them rather than implying a clean bill. (Poisoned *content* reaching the model is
+  covered: dimension 13 treats a retrieved document as untrusted input.) *Training-time data and model
+  poisoning* is out of scope by artifact class — these listings consume models, they do not train them;
+  if one does fine-tune, that is outside this rubric. Both bounds are the same discipline as the
+  unexercised Go/Terraform parsers: an unbounded claim is worse than a stated gap.
   **Report a zero against the corpus that produced it.** Measured on 1138 real JS/TS files: three of
   these rules found nothing because that corpus contains **no instances of what they look for** — a
   true negative with no discriminating power. "0 false positives" from such a run is an overclaim of
@@ -555,6 +563,40 @@ frequently the highest-impact dimensions — not optional add-ons.
     interpolated" but "can the owner of the scanned asset write any of it" — a resource *name* is
     attacker-authored, a resource *count* is not. Zero hits proves little: a prompt assembled in a
     variable and passed by name is invisible to it, which is how most real code is written.
+    **Now ask the same question backwards: what does the hidden context give AWAY?** Injection is data
+    getting *into* the instruction channel; this is the reverse direction, and the rules above are blind
+    to it. Assume the system prompt, developer instructions, retrieved policy text, and **every tool/
+    function schema** are discoverable by a determined user — design so that disclosure costs nothing.
+    Two findings, and note that the first is not "the prompt can leak":
+    - **A secret in the context.** Credentials, tokens, connection strings, or internal endpoints
+      embedded in a system prompt or tool description. The defect is putting it there, not the leak.
+    - **A control that depends on the context staying secret.** Authorization, privilege separation,
+      role gating, or content filtering enforced *by prompt text* is enforced by nothing — the same
+      "enforced control, not merely a prompt instruction" bar as dimension 17, applied to secrecy
+      instead of authority. If revealing the rule defeats the rule, it was never a control.
+      Refusal/filter criteria are the common case: leaking them hands over the bypass conditions.
+    **This lands hardest on MCP servers**, which assemble tool schemas *into* the context by design, so
+    a description saying "requires the developer role" both discloses the role model and implies a gate
+    that the schema cannot enforce. Severity tracks reliance, not exposure: no secrets and no reliance
+    is informational; embedded credentials, or authorization resting on secrecy, is high.
+    **Then follow the injection question across time and across agents — two sinks this dimension's
+    payload probe cannot reach, because both need a second run to show up.**
+    - **Persisted state / agent memory.** If the agent writes anything it reads back later — a memory
+      store, a vector index, a scratch file, a conversation summary, a cache — then **that store is
+      attacker-influenceable input on read-back**, by exactly the argument that makes a resource name
+      untrusted: attacker-authored text went in on run 1. **A document returned from a knowledge base or
+      RAG index is untrusted input in the same way**, whoever wrote it in — this dimension's payload
+      question applies to retrieved content, not only to scanned fields. Ask whether it is re-validated on the way
+      *out*, or trusted because "we wrote it." The probe above tests one turn; this defect needs two, so
+      **plant the payload, end the session, start a new one, and see if it comes back**. Scope matters as
+      much as content: memory shared across users or across agents turns one poisoned entry into everyone's
+      problem, so ask what isolates sessions and how long entries live.
+    - **Inter-agent messages.** A message, handoff, or delegation from another agent is not trusted input
+      merely because the sender is also an agent. Ask whether the channel is authenticated, whether
+      messages are schema-validated and rejected when malformed, and whether a forged handoff could
+      inject a task. The failure mode is propagation: a wrong answer accepted downstream compounds
+      instead of surfacing, which is why dimension 5's partial-failure tolerance does not cover it —
+      that asks whether a failure is handled cleanly, not whether a *confident wrong* result spreads.
 
 14. **AI data handling — at rest & vendor egress.** (a) Sensitive scan *output* written to
     disk (exposed-secret locations, PII/PHI, hostnames/IPs, identities, exposed IP:ports — an
@@ -583,11 +625,35 @@ frequently the highest-impact dimensions — not optional add-ons.
     binds `0.0.0.0`, and the real defect is that nothing authenticates the caller once it does. **The
     biggest gap here is an absence, so no scanner can flag it** — `listen(port)` with no host argument
     is also all-interfaces on Node. Ask what the framework's default is; a clean scan does not answer it.
+    **If the enforced control IS a human approval, audit the human's side of it too** — a control the
+    design satisfies on paper and the workflow defeats in practice. Present-and-wired is not the bar;
+    ask whether the approver can actually decide:
+    - **Does the request show what is being approved?** A summary written by the agent that is about to
+      act on the answer is not a neutral description of the action. Prefer the concrete diff, command, or
+      target list over a model-authored gloss of detail — and treat inflated confidence as a defect.
+    - **Can approvals be batched, bundled, or fired rapidly enough to become a rubber stamp?** Approval
+      fatigue is the exploit: enough low-stakes prompts and the high-stakes one is waved through. Look
+      for rate limits, criticality ranking so risky actions look different, and dual approval on the
+      irreversible ones.
+    - **Can the gate be bypassed rather than beaten?** Delegation to another agent, a timing gap, a
+      retry that skips the prompt, or a default-approve on timeout. A gate that fails open on silence
+      is dimension 3's fail-open defect wearing an authorization costume.
+    Also ask who the agent may *act as*: if it delegates or assumes another identity, does the audit
+    trail survive the handoff, or does every action land under one service principal — which makes
+    attribution impossible after the fact and is its own finding.
 
 18. **Supply-chain provenance.** Packages, container images, CI actions, and CDN assets are
     pinned to immutable versions/digests, with SRI on CDN `<script>`/`<link>`. No moving tags
     (`@main`), no runtime `docker pull` of unverified images, no imports undeclared in the
     manifest, `npm ci` (not `npm install`) in CI.
+    **Models, datasets, and remote prompts are dependencies too, and the pinning question is identical
+    in a registry nobody thinks to check.** A model pulled by moving tag (`:latest`, a bare HF repo id
+    with no revision), a dataset or embedding index fetched at runtime from an unverified URL, or a
+    system prompt / tool manifest loaded from a remote endpoint are all unpinned dependencies — and the
+    last one is also dimension 13's injection sink, since whoever controls that endpoint controls the
+    instruction channel. Ask for a revision/digest and an integrity check. `pinned-vuln-scan.py` does
+    **not** cover any of this: it reads package manifests, so a model reference is invisible to it and
+    a clean run says nothing about them.
     **"Pinned" is not "safe" — check both, they are opposite failures.** An unpinned dependency
     is non-reproducible; a *pinned* one is reproducibly whatever it was, including reproducibly
     vulnerable, and it never drifts to a fix on its own. A clean pinning review says nothing

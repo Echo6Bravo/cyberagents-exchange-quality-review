@@ -76,6 +76,22 @@ expected to keep that bar green.
   `SKILL.md`** — the mapping is deliberately derivable (`grep owasp: scripts/semgrep-rules/*.yaml`)
   rather than embedded, because a table goes stale the moment a rule is added and still reads as current.
   Cite categories by **name, not number**; four numbers moved between the 2021 and 2025 lists.
+- **There are THREE OWASP lists in scope here, and "the OWASP Top 10" means only the first.** The
+  web-application Top 10 covers the scanner-and-sink dimensions; the **GenAI LLM Top 10** and the **Top
+  10 for Agentic Applications** cover dimensions 13–19, which is where most Exchange listings actually
+  live. A coverage claim that names one list must say which. This was a real blind spot: the web list was
+  walked systematically while the other two had never been opened, in a rubric written for LLM agents.
+  **Numbers move on these lists more than on the web one** — `Excessive Agency` went LLM08 → LLM03 and
+  `Insecure Output Handling` LLM02 → LLM10 between releases, and OWASP's own agentic draft cites a stale
+  `LLM06:2025 Excessive Agency`. Name-only citation is not a style preference. **Fetch the list before
+  relying on it:** the LLM project moved to the OWASP GenAI Security Project and its old page is now an
+  archive, so a recalled list is likely wrong. And check maturity before treating a list as a basis —
+  the agentic Top 10 is a first public draft whose expanded entries are still unfilled templates, so this
+  repo cites none of its ids and gates nothing against it. **Don't gate on a draft.**
+- **If you cite a helper script in `SKILL.md`, write the `scripts/` prefix.** `gate2e` checks that cited
+  scripts exist, and it keys on that prefix — which is deliberate, since it must *not* demand the
+  Exchange's own `validator.py`. A bare `mutation-check.sh` is unchecked and a rename through that
+  spelling will go unnoticed.
 - **If you cite a rule id in `SKILL.md`, cite it in backticks and keep both language variants current.**
   `gate2d` catches a citation that resolves to no file, but it cannot catch the likelier drift: a
   citation that names only `py-*` after a `ts-*` counterpart exists. That happened here — three
