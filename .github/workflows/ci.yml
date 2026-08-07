@@ -44,6 +44,25 @@ jobs:
         run: |
           sudo apt-get -qq update && sudo apt-get -qq install -y shellcheck
           shellcheck -S warning scripts/*.sh
+      - name: ruff the shipped Python (pinned)
+        # Added because its absence was caught by the thing it should have caught: three UP031
+        # findings sat in scripts/semgrep-rules/py-path-write-without-containment.py through four
+        # passes of work. The README lists ruff in the toolkit and this repo claims to run the
+        # gates it recommends -- so not running it was an overstated coverage claim of exactly the
+        # kind dimension 12 exists to catch.
+        #
+        # The semgrep fixtures are IN scope deliberately. They are planted-defect files, so the
+        # temptation is to exempt them; but the defect each one plants is a *security* shape, not a
+        # formatting one, and a fixture is still code a contributor reads and copies. Where a lint
+        # rule genuinely conflicts with the planted defect, silence it with a narrow `# noqa: <code>`
+        # carrying the reason -- never widen an exclude, which would blind this step to the next file.
+        #
+        # Negative control (measured, not assumed): with the percent-format spellings restored in
+        # that fixture this step reports "Found 3 errors" and fails; ruff's `S` rules stay off here
+        # for the same reason as everywhere else -- bandit owns that lane (S501 == B501).
+        run: |
+          pip install --quiet ruff==0.16.1
+          ruff check --no-cache .
       - name: Install semgrep (pinned)
         # Pinned to an exact version, not a range: dimension 18 asks the same of every submission,
         # and the rule gates were measured against this engine. A floating install would silently

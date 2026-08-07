@@ -80,7 +80,7 @@ inflates a finding count and makes a review look deeper than it is.
 |---|---|---|
 | **gitleaks** | Secrets, **full git history** | A secret in an old commit is still leaked; `fetch-depth: 0` in CI |
 | **ruff** | Python lint / correctness | Fast; the `S` (flake8-bandit) rules are **deliberately not enabled** — see below |
-| **bandit** | Python security (SAST) | Owns Python security outright, e.g. `verify=False` → B501 |
+| **bandit** | Python security (SAST) | Owns Python security outright: `verify=False` → B501, `md5` → B324, `pickle.loads` → B301, unsafe `yaml.load` → B506, `random` for a token → B311 (all verified by running it, not read off its docs). **Optional**, so credit that coverage conditionally |
 | **semgrep** | **Everything Python tools can't reach — JS/TS above all** | This skill's **own rules only**; see below |
 | **shellcheck** | Shell scripts | `-S warning` |
 | **actionlint** | GitHub Actions workflows | Catches invalid inputs before a failed run |
@@ -217,13 +217,31 @@ repo for them.
 
 ## CI
 
-This repo runs the same gates it recommends (dimensions 8, 11, 18): **gitleaks** full-history
-secret scan, **actionlint** on its own workflow, and a **SKILL.md structure check** (valid
+This repo runs the same gates it recommends (dimensions 8, 11, 18), in four jobs: **gitleaks**
+full-history secret scan, **actionlint** on its own workflow, a **SKILL.md structure check** (valid
 `name`/`description` frontmatter, substantive body, all 19 dimensions present, the three output
 buckets in order, the severity rules stated, no leftover placeholders) plus a check that the
-example review obeys the bucket structure. Each check ships with a negative control — it was
-verified to *fail* when the thing it guards is removed, per the skill's own dimension 11.
+example review obeys the bucket structure, and **shellcheck + ruff + the helper-script suite** (118
+tests, including the six gates on the semgrep rules). Each check ships with a negative control — it
+was verified to *fail* when the thing it guards is removed, per the skill's own dimension 11.
 See `.github/workflows/ci.yml`.
+
+**One of those gates was added because its own absence proved the point.** `ruff` was listed in the
+toolkit above and recommended to every submission, but CI never ran it — so three lint findings sat
+in a shipped semgrep fixture through four passes of work with nothing to catch them. That is the
+overstated-coverage failure this skill audits others for (dimension 12), committed here. It now runs
+pinned, with the fixtures deliberately **in** scope: a planted defect is a *security* shape, not a
+formatting one, and a fixture is still code a contributor reads. A genuine conflict gets a narrow
+`# noqa: <code>` with its reason, never a widened exclude.
+
+**The rule gates are themselves gated, because every semgrep failure mode here is a silent zero.**
+`semgrep test` exits 0 when it finds no fixtures at all, and `semgrep validate` exits 0 while
+printing "Configuration is invalid" — so the gates read output text, never exit codes. semgrep is
+pinned (`==1.172.0`) and CI **fails if the rule gates report themselves as skipped**, so an install
+that quietly didn't take effect can't pass as a clean run. Gate 5 applies dimension 11 to the rules
+reflexively: for each of 40 rows it removes one planted defect from a fixture and requires exactly
+one finding to disappear, with negative-control rows that mutate an incidental value and require the
+finding to *remain*. A rule that survives its own defect removal matches the file, not the defect.
 
 ## Known limitations
 

@@ -8,7 +8,11 @@ and posts to Slack). Findings, line numbers, and repo are invented for illustrat
 ---
 
 **Preflight — coverage:** gitleaks ✓, ruff ✓, bandit ✓, shellcheck ✓, actionlint ✓; CodeQL
-workflow present and green. Full coverage — no degraded dimensions.
+workflow present and green. **semgrep ✓ — engine plus this skill's own rules** (10 rules, dimensions
+2, 6, 8, 11, 13, 17); the hosted registry is not used, so JS/TS coverage is *those rules and no
+more*. This repo is Python-only, so the seven JS/TS rules had nothing to analyse — recorded here as
+"not applicable," not as a pass. No degraded dimensions; note that "no degraded dimensions" is a
+statement about which **tools ran**, not a claim that every dimension was fully probed.
 
 **Findings:** 1 rejection gate failed · 4 defects (1 Critical, 2 High, 1 Medium) · 1 informational.
 

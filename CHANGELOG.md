@@ -60,6 +60,15 @@ All notable changes to this skill are documented here. The format follows
   reach `semgrep.dev` while semgrep's own fetch still fails (different trust stores), and the
   config fetch has no bounded timeout.
 
+- **CI now runs `ruff` (pinned), which it had been recommending without running.** Found the way
+  these things should be found: three `UP031` findings had been sitting in a shipped semgrep fixture
+  because nothing linted it. The README listed `ruff` in the toolkit and claimed this repo runs the
+  gates it recommends, so its absence was an overstated coverage claim — dimension 12's own failure
+  mode, committed here. The semgrep fixtures are deliberately **in** scope: the defect each one plants
+  is a security shape, not a formatting one, so a conflict gets a narrow `# noqa: <code>` with its
+  reason rather than a widened exclude. Verified with a negative control (percent-format restored →
+  "Found 3 errors", exit 1). `ruff`'s `S` rules stay off, as everywhere: `bandit` owns that lane.
+
 ### Changed
 - The shipped-helper directives and the CI comment no longer hardcode how many scripts ship
   ("these two" → "every script in `scripts/`"), so adding a scanner cannot leave a stale count.
