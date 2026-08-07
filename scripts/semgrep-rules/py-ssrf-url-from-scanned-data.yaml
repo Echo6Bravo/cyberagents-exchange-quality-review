@@ -36,6 +36,12 @@
 # draft had an inert `httpx` exclusion and an inert generic-verb exclusion; rather than ship patterns
 # that look protective and do nothing, the fixture gained the two real safe shapes that make them
 # fire. Re-run the ablation after editing either file.
+#
+# TYPESCRIPT SIBLING: `ts-ssrf-url-from-scanned-data`. Same dimension and CWE, separate rule because
+# the sinks differ (`fetch`/`axios`/`got` vs `requests`/`httpx`/`urlopen`). The literal-exclusion
+# behaviour this rule relies on -- `"..."` excluding a static f-string while still firing on an
+# interpolating one -- was MEASURED to hold in JS too, for static vs interpolated template literals.
+# The TS side is far noisier (182 corpus findings vs 0 here) and carries a `paths:` filter as a result.
 rules:
   - id: py-ssrf-url-from-scanned-data
     languages: [python]

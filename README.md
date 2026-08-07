@@ -141,6 +141,22 @@ tells the assistant to repeat them rather than report a bare zero:
   assertion's **signature**, not by guessing `jti`. Measured 0 collisions in 2,000,000 values. The rule
   header now carries the triage rule this produced: ask **which property** the consumer needs — uniqueness
   or unpredictability — and read the spec rather than inferring it from the field's name.
+- **The three newest TS rules were measured *before* they were written, and one of them is a triage
+  queue rather than a defect list.** Authoring and measuring is one task here, because shipping a rule
+  the corpus has never seen recreates exactly the `ts-binds-all-interfaces` blind spot described below.
+  `ts-failopen-on-exception` matches only `return true` and `return []` in a `catch` because the corpus
+  showed 33 permissive catch returns distributed **null: 18, undefined: 11, []: 4, true: 0** — matching
+  `null`/`undefined` would have made the rule ~88% noise, so the exclusion is a measurement, not taste.
+  `ts-ssrf-url-from-scanned-data` measured **182 findings**, reduced to 60 by excluding test files and
+  provably-safe URL shapes; it stays noisy because 154 of the 182 pass a bare variable that no
+  syntactic rule can resolve, so its output is a queue of one question — *where does the host come
+  from?* — not a finding list. `ts-path-write-without-containment` measured 43 (11 outside tests), and
+  its most instructive hit is a **false positive** whose containment lives in the caller.
+- **A fourth rule was deliberately not written, because the bug does not port.** A TypeScript version of
+  `py-caseless-string-case-check` was scoped and dropped: in Python `"123".islower()` and
+  `"123".isupper()` are *both* False, which is what makes the check wrong, whereas in JS
+  `s === s.toLowerCase()` is **true** for `"123"`. The semantics are inverted, not transplanted, so a
+  port would have been a rule for a bug that does not exist.
 - **That run also found a defect in one of these rules, which is the point of measuring.**
   `ts-binds-all-interfaces` reported zero against a corpus holding 102 `.listen(` calls, because modern
   MCP servers bind via a framework factory rather than `.listen()`. It was missing 8 real sites. A zero
@@ -168,7 +184,7 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
 | `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
 | `pinned-vuln-scan.py` | Dependencies that are **pinned and vulnerable** — a clean pinning review says nothing about this, since a pin reproduces whatever it was and never drifts to a fix. Checks each exact pin against the GitHub Advisory DB via `gh` | 18 |
-| `semgrep-rules/` | **12 authored rules** for shapes `ruff`/`bandit` cannot reach — seven of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values. Plus five Python rules: two test-quality shapes, path containment, an SSRF URL built from scanned data, and an exception handler that fails **open**. | 2, 3, 6, 8, 11, 13, 17 |
+| `semgrep-rules/` | **15 authored rules** for shapes `ruff`/`bandit` cannot reach — ten of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values; a `catch` that returns a permissive value; an SSRF URL built from scanned data; a file write with no containment guard. Plus five Python rules: two test-quality shapes, path containment, an SSRF URL built from scanned data, and an exception handler that fails **open**. | 2, 3, 6, 8, 11, 13, 17 |
 
 Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
 reading the code, never a confirmed defect, and **zero hits is never proof**. Each ships with tests,

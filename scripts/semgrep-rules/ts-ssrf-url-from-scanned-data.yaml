@@ -1,0 +1,184 @@
+# Dimension 2 (input safety) / dimension 17 (outbound authority), SSRF sink. CWE-918.
+# Maps to OWASP 2025 A01 Broken Access Control, which absorbed SSRF.
+# TypeScript counterpart of `py-ssrf-url-from-scanned-data`; read that header too, since the
+# reasoning about what an allowlist check does and does not prove is shared.
+#
+# WHY IT IS A SEPARATE RULE and not `languages: [python, js, ts]` on the Python one: the sinks do not
+# transfer. Python's are `requests`/`httpx`/`urlopen`; JS's are `fetch`/`axios`/`got`/`http.request`.
+# The exclusion LOGIC turned out to be identical (see below), but a single rule would still need both
+# sink families and both guard syntaxes, and the FP distributions differ sharply by language.
+#
+# WHAT THIS RULE DOES NOT PROVE -- read before trusting a zero. It checks that a host allowlist is
+# LEXICALLY PRESENT in the same function as the request. It does not prove the allowlist is correct,
+# complete, or applied to the URL actually requested, and it is NOT taint analysis: a URL arriving
+# through a helper is invisible. It also cannot see a redirect -- an allowlisted host that 302s to
+# 169.254.169.254 defeats every pattern here, and `fetch` follows redirects by default
+# (`redirect: "follow"`). Dimension 2 and 17 prose stay the primary proof.
+#
+# THE TEMPLATE-LITERAL QUESTION, and a CORRECTED measurement. An earlier draft of this rule carried a
+# `metavariable-regex` (`^`[^`$]*`$`) to exclude static template literals, on the stated belief that
+# JS diverged from Python here -- that `"..."` would not match a template literal at all, so static
+# templates needed their own exclusion. THAT WAS WRONG, and ablation caught it: dropping both regex
+# blocks changed the fixture result not at all. Measured directly on a 4-case probe, `fetch($U, ...)`
+# minus `pattern-not: fetch("...", ...)` fires on the interpolated template and the bare variable and
+# NOT on the literal or the static template -- i.e. `"..."` matches a static template literal and
+# does not match an interpolating one, exactly the Python behaviour. So the regex blocks were
+# decorative and are gone; `"..."` alone is correct and sufficient.
+#
+# The real trap, which the draft was groping at, is narrower and still worth recording: writing
+# `pattern-not: fetch(`...`, ...)` -- with backticks -- excludes ALL template literals INCLUDING
+# interpolated ones. Measured: it suppresses `fetch(`https://${finding.host}/details`)`, a real SSRF,
+# leaving the rule near-vacuous while looking complete. Do not add that pattern. The double-quoted
+# form already covers the static case.
+#
+# MEASURED ON THE CORPUS, and this rule is by far the NOISIEST in the ruleset -- read this before
+# using it. First run against the 1074-file MCP corpus: 182 findings on 1205 files scanned. That is
+# not a usable signal, and a rule at that volume gets switched off, so two filters were added and each
+# was measured rather than guessed:
+#
+#   182  no filters
+#   173  + literal-host and relative-URL template exclusions (see the precision filter below)
+#    60  + `paths: exclude` for test files (810 files scanned)
+#
+# EVEN AT 60 THIS IS A TRIAGE QUEUE, NOT A DEFECT LIST. Of the 182 original findings, 154 pass a BARE
+# VARIABLE (`fetch(url, {...})`) -- no syntactic hint of provenance whatsoever. Nothing short of
+# interprocedural taint can separate those, so the rule does not try; it asks the reviewer one
+# question. The remaining template hits are dominated by `fetch(`${configuredBaseUrl}/fixed/path`)` --
+# a base URL from config or an env var with a hardcoded path, which is not SSRF because the host is
+# not attacker-influenced, and which is lexically identical to the real thing. The fixture ANNOTATES
+# that shape as a finding rather than pretending the rule can tell the difference.
+#
+# A FILTER THAT WAS MEASURED AND REJECTED, recorded so nobody re-adds it: excluding a URL variable
+# assigned from a literal (`pattern-not-inside: $V = "..."; ...`) looks like it would kill much of the
+# bare-variable noise. It does not scope to the URL variable. Measured: with ANY unrelated literal
+# assignment in the function -- `const method = "GET";` -- it suppressed BOTH real SSRF probe cases,
+# reporting nothing. A filter that silently swallows true positives is worse than the noise.
+#
+# WHY NOT `mode: taint`: same measured reason as the Python counterpart -- default taint mode is
+# intraprocedural and does not cross the helper boundary real code always has, and interprocedural
+# analysis needs Semgrep Pro (login-gated binary, unavailable behind a TLS-intercepting proxy). Do
+# not "improve" this into taint mode without re-measuring.
+#
+# EVERY EXCLUSION BELOW IS ABLATION-TESTED LOAD-BEARING -- removing any one reintroduces a finding on
+# a correct form in the fixture. This is the same standard the Python counterpart's header sets, and
+# it cost real work here: the first ablation run found the two metavariable-regex blocks inert (now
+# deleted) and the `got`/`http.request`/`https.request` exclusions inert only because the fixture
+# exercised nothing but `fetch` and `axios`. Rather than ship exclusions that look protective and do
+# nothing -- and rather than leave four sink branches with zero test coverage -- the fixture gained
+# real safe and unsafe shapes for those sinks. Re-run the ablation after editing either file.
+#
+# KNOWN FALSE POSITIVE CLASSES (measured; expect these to be the majority):
+#   * `fetch(`${base}/fixed/path`)` where `base` is config, an env var, or a constant. The single most
+#     common shape in real MCP servers. Not a defect -- but note that a base URL read from
+#     *tool input* IS one, and the two are lexically identical.
+#   * A URL built from a value the tool itself just minted (a session id, a request id).
+#   * OAuth discovery: `fetch(`${authServerUrl}/.well-known/oauth-authorization-server`)`. Genuinely
+#     data-derived in the MCP auth flow, and genuinely intended -- the spec requires following the
+#     issuer. Worth reading, usually not worth reporting.
+#
+# KNOWN BLIND SPOTS, all deliberate:
+#   * `new URL(userInput)` then `fetch(urlObject)` fires (the URL is a variable by then), but
+#     `new URL(...)` with no request does not. Fine: the sink is the request.
+#   * `node-fetch` as a renamed import, `undici.request`, `XMLHttpRequest`, and any wrapper
+#     (`apiClient.get`). Only the spellings listed below are matched. A wrapper-based codebase will
+#     report zero and that zero means nothing -- check the construct is present before believing it.
+#   * `allowlist.includes()` is the only allowlist spelling recognized, plus its negation. A `Set`
+#     (`ALLOW.has(host)`), a regex test, or a `switch` is not recognized and will FALSE-POSITIVE on
+#     correct code. Documented rather than fixed, because each added spelling is another chance to
+#     accept a guard that does not guard; the Python counterpart makes the same trade with 3 spellings.
+#   * Redirects, as above. This is the gap that most often makes a "guarded" call exploitable anyway.
+rules:
+  - id: ts-ssrf-url-from-scanned-data
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim2/dim17: outbound HTTP request to a non-literal URL with no host allowlist in the same
+      function. ANSWER THIS ONE QUESTION: where does the host come from? If any part of it comes from
+      scanned data, an API response, or tool input, it can be pointed at the cloud instance-metadata
+      endpoint (169.254.169.254), at localhost admin ports, or at an internal service -- and the
+      response may come back to the caller. If it is a base URL from config or an env var with a
+      fixed path, this is not a defect; say so and move on. Fix by parsing the URL and asserting the
+      hostname against an allowlist immediately before the request; a scheme check or a substring
+      test is not an allowlist. Consider `redirect: "manual"`, since `fetch` follows redirects by
+      default and an allowlisted host can redirect to a blocked one. This rule proves only that an
+      allowlist is lexically present, never that it is correct. Python counterpart:
+      `py-ssrf-url-from-scanned-data`.
+    metadata:
+      qr-dimension: 2
+      owasp: "A01:2025 Broken Access Control (SSRF)"
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: LOW
+    # THE ONLY `paths:` FILTER IN THIS RULESET. The other two rules that mention `paths:` deliberately
+    # have none and record why, so this divergence needs its own reason. Measured: of 182 corpus
+    # findings, 122 are in test files, overwhelmingly `fetch(`http://127.0.0.1:${port}/mcp`)` against a
+    # server the test just started. A test harness reaching its own loopback port is not an SSRF sink
+    # in the shipped artifact.
+    #
+    # `examples/` and `*.examples.*` are NOT excluded, deliberately, and that choice cost 14 findings
+    # of extra noise. Example code in a submission is code users copy into their own servers, so an
+    # unguarded `fetch(url)` in a guide is worth a question even though it will usually be fine. That
+    # is a judgement, not a measurement; it is written down so it can be argued with.
+    #
+    # VERIFIED NOT TO CREATE A SILENT ZERO -- the failure mode `py-negative-control-by-replace`
+    # documents for `paths: include`. A direct scan of this rule's fixture still reports 11 findings on
+    # 1 file scanned, and `semgrep test` stays green, so Gate 5's mutation rows still work. Re-check
+    # both if this list is edited: the fixture basename must not match any glob here.
+    paths:
+      exclude:
+        - "*_test.*"
+        - "*.test.*"
+        - "*.spec.*"
+        - "test/"
+        - "tests/"
+        - "__tests__/"
+        - "e2e/"
+    patterns:
+      - pattern-either:
+          - pattern: fetch($U, ...)
+          - pattern: axios.get($U, ...)
+          - pattern: axios.post($U, ...)
+          - pattern: axios.put($U, ...)
+          - pattern: axios.delete($U, ...)
+          # QUOTED deliberately: an unquoted `pattern:` value containing a colon is invalid YAML.
+          # Measured on this very rule -- the first draft failed to parse with "mapping values are
+          # not allowed in this context" on this line, and `semgrep validate` reports that as a
+          # WARNING while still exiting 0. Do not unquote it.
+          - pattern: "axios.request({url: $U, ...})"
+          - pattern: got($U, ...)
+          - pattern: http.request($U, ...)
+          - pattern: https.request($U, ...)
+      # A hardcoded URL carries no SSRF risk from input data. `"..."` also excludes a STATIC template
+      # literal and does NOT exclude an interpolating one -- measured, see the header. All five are
+      # ablation-tested load-bearing against the fixture.
+      - pattern-not: fetch("...", ...)
+      - pattern-not: axios.$M("...", ...)
+      - pattern-not: got("...", ...)
+      - pattern-not: http.request("...", ...)
+      - pattern-not: https.request("...", ...)
+      # PRECISION FILTER, ablation-measured: removes 9 of 182 corpus findings. Modest, but every one it
+      # removes is provably not an SSRF. Excludes a template whose HOST is a literal -- the
+      # interpolation sits in the path, the query string, or the port, so the request cannot be aimed
+      # at a different host. `https://api.example.com/items/${id}` and `http://127.0.0.1:${port}/mcp`
+      # are excluded; `https://${host}/x` and `${base}/x` still fire.
+      - pattern-not:
+          patterns:
+            - pattern: fetch($T, ...)
+            - metavariable-regex:
+                metavariable: $T
+                regex: '^`[a-z][a-z0-9+.-]*://[^/$`:]+(:[^/`]*)?[/`]'
+      # A relative URL has no host -- it resolves against the origin, so it is same-origin by
+      # construction and not an SSRF sink.
+      - pattern-not:
+          patterns:
+            - pattern: fetch($T, ...)
+            - metavariable-regex:
+                metavariable: $T
+                regex: '^`/[^/]'
+      # The two allowlist spellings recognized, both ablation-tested load-bearing: with only the
+      # first, the positive-guard form is a FALSE POSITIVE ON CORRECT CODE. See the blind spot on
+      # `Set`, regex, and `switch` -- those are NOT recognized and will false-positive.
+      - pattern-not-inside: |
+          if (!$ALLOW.includes($H)) { ... }
+          ...
+      - pattern-not-inside: |
+          if ($ALLOW.includes($H)) { ... }

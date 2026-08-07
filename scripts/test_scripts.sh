@@ -452,7 +452,31 @@ py-ssrf-url-from-scanned-data${TAB}urllib.request.urlopen(finding[\"evidence_url
 py-ssrf-url-from-scanned-data${TAB}httpx.get(finding[\"callback\"], timeout=TIMEOUT)${TAB}httpx.get(STATUS_URL, timeout=TIMEOUT)
 py-failopen-on-exception${TAB}        return True${TAB}        raise RuntimeError(\"policy unreadable\")
 py-failopen-on-exception${TAB}        return []${TAB}        raise RuntimeError(\"findings unreadable\")
-py-failopen-on-exception${TAB}        pass${TAB}        raise"
+py-failopen-on-exception${TAB}        pass${TAB}        raise
+ts-failopen-on-exception${TAB}    return true;${TAB}    return false;
+ts-failopen-on-exception${TAB}    return true; // bound catch: same defect, second pattern branch${TAB}    return false;
+ts-failopen-on-exception${TAB}    return [];${TAB}    throw new Error(\"scan failed\");
+ts-failopen-on-exception${TAB}    return []; // unbound catch: same defect, fourth pattern branch${TAB}    throw new Error(\"scan failed\");
+ts-ssrf-url-from-scanned-data${TAB}await fetch(url);${TAB}await fetch(\"https://api.example.com/status\");
+ts-ssrf-url-from-scanned-data${TAB}await fetch(\`https://\${finding.host}/details\`);${TAB}await fetch(\"https://api.example.com/details\");
+ts-ssrf-url-from-scanned-data${TAB}axios.post(finding.detailsUrl, { body })${TAB}axios.post(\"https://api.example.com/events\", { body })
+ts-ssrf-url-from-scanned-data${TAB}axios.request({ url: finding.detailsUrl, method: \"GET\" })${TAB}axios.get(\"https://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}axios.get(finding.detailsUrl)${TAB}axios.get(\"https://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}axios.put(finding.detailsUrl, { body })${TAB}axios.put(\"https://api.example.com/x\", { body })
+ts-ssrf-url-from-scanned-data${TAB}axios.delete(finding.detailsUrl)${TAB}axios.delete(\"https://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}got(finding.detailsUrl)${TAB}got(\"https://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}http.request(finding.detailsUrl)${TAB}http.request(\"http://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}https.request(finding.detailsUrl)${TAB}https.request(\"https://api.example.com/x\")
+ts-ssrf-url-from-scanned-data${TAB}await fetch(\`\${config.baseUrl}/api/v1/status\`);${TAB}await fetch(\"https://api.example.com/api/v1/status\");
+ts-path-write-without-containment${TAB}fs.writeFileSync(finding.path, body)${TAB}fs.writeFileSync(path.join(OUT, \"report.json\"), body)
+ts-path-write-without-containment${TAB}fs.writeFileSync(path.join(OUT, finding.name), body)${TAB}fs.writeFileSync(path.join(OUT, \"named.json\"), body)
+ts-path-write-without-containment${TAB}fs.writeFileSync(\`\${OUT}/remediate-\${finding.name}.tf\`, body)${TAB}fs.writeFileSync(\`/var/tmp/reports/remediate.tf\`, body)
+ts-path-write-without-containment${TAB}fs.appendFileSync(finding.path, line)${TAB}fs.appendFileSync(path.join(OUT, \"audit.log\"), line)
+ts-path-write-without-containment${TAB}fs.appendFile(finding.path, line, () => undefined)${TAB}fs.appendFile(path.join(OUT, \"audit.log\"), line, () => undefined)
+ts-path-write-without-containment${TAB}fs.writeFile(finding.path, body, () => undefined)${TAB}fs.writeFile(path.join(OUT, \"report.json\"), body, () => undefined)
+ts-path-write-without-containment${TAB}fs.createWriteStream(finding.path)${TAB}fs.createWriteStream(path.join(OUT, \"stream.bin\"))
+ts-path-write-without-containment${TAB}fs.promises.writeFile(finding.path, body)${TAB}fs.promises.writeFile(path.join(OUT, \"report.json\"), body)
+ts-path-write-without-containment${TAB}fs.promises.appendFile(finding.path, line)${TAB}fs.promises.appendFile(path.join(OUT, \"audit.log\"), line)"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)

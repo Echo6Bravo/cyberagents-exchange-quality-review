@@ -52,6 +52,11 @@
 #
 # So the measured FP rate is 2 findings across 111 real Python files, both of the same shape (a narrow
 # `except` around an optional operation), and both correctly identified by reading three lines.
+#
+# TYPESCRIPT SIBLING: `ts-failopen-on-exception`. Same dimension and CWE, separate rule because the
+# patterns do not transfer -- `try/except/pass` has no JS analogue and JS has two `catch` spellings.
+# Its FP distribution is also different and measured: in JS, `return null`/`undefined` are 29 of 33
+# corpus catch returns, so that rule deliberately matches only `true` and `[]`.
 rules:
   - id: py-failopen-on-exception
     languages: [python]
