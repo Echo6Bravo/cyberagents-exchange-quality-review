@@ -7,6 +7,24 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **OWASP 2025 mapping as per-rule metadata plus a pointer, deliberately not as a coverage table.** All
+  15 rules now carry an `owasp:` key; the two dimension-11 test-hygiene rules state
+  `no applicable category -- ...` explicitly, matching the idiom their `cwe:` field already used, because
+  an absent key is indistinguishable from an unmapped one. `SKILL.md` gains a short pointer saying the
+  per-category view is **derivable** (`grep owasp: scripts/semgrep-rules/*.yaml`) and that the skill is
+  organized by dimension and CWE, not by framework. **No table ships**, for the same reason the Exchange
+  checklist is not embedded: a copy of a list maintained elsewhere goes stale silently while still reading
+  as current, and a mapping table becomes wrong the moment a rule is added — dimension 12's own failure
+  mode. Categories are cited by **name, not number**, since four numbers moved between the 2021 and 2025
+  lists and a stale "A10 SSRF" now misleads. The pointer also states what the metadata cannot: an absent
+  `owasp:` value means no *rule* maps to a category, not that the dimension set misses it — A03 is a
+  standalone probe, A06 a documented rejection, A07 and A09 prose-only by measurement, and A04/A08 lean
+  partly on `bandit`'s rule ids.
+- **`gate2c` and `gate2d`** (suite 169 → **171**), because the pointer above is a claim and this repo's
+  own rule is that a claim needs a gate. `gate2c` fails if any rule omits `owasp:` — the derive-on-demand
+  trade only holds while the metadata is complete. `gate2d` fails if a rule id cited in `SKILL.md`
+  resolves to no file. Both were **proven by breaking them**: removing one `owasp:` key and renaming one
+  cited id made each gate fail naming the exact cause.
 - **Three TypeScript counterparts for Python-only rules, each measured against the 1074-file MCP corpus
   before it was considered done.** 12 rules → **15**. Authoring and measuring is one task here, because
   `ts-binds-all-interfaces` (below) proved that a rule the corpus has never seen can ship looking
@@ -62,6 +80,20 @@ All notable changes to this skill are documented here. The format follows
   rather than re-scanning, so the proof costs no measurable wall clock. Suite: 132 → **145 tests**.
 
 ### Fixed
+- **Three `SKILL.md` citations named only the Python rule after its TypeScript counterpart existed.**
+  Dimension 2's SSRF bullet, dimension 3's fail-open bullet, and dimension 10's egress bullet all pointed
+  at `py-*` alone, so a reviewer working a TypeScript submission — the artifact class the kit is mostly
+  for — would not have learned the TS rule was there. Now cite both, with the TS rules' measured caveats
+  at the point of use: the SSRF rule ships as a triage queue, and the fail-open rule's narrowness is the
+  null:18/undefined:11/[]:4/true:0 corpus distribution rather than an oversight, so a `catch` returning
+  `null` must be asked about by hand. Caught while auditing framework coverage, not by any check; the new
+  `gate2d` catches only the harder-failing case where a cited id resolves to nothing.
+- **A new gate's first version was wrong in a way only running it exposed.** `gate2d` initially scanned
+  for `(py|ts)-[a-z0-9-]+` anywhere in `SKILL.md` and reported four dangling rule ids that were never
+  citations: it had matched mid-word inside `cyberagents-exchange` (the skill's own name) and
+  `happy-path-only`. Fixed to require a backtick span. Recorded because the gate looked obviously correct
+  while being wrong, which is the argument for running a new check against known-bad input before
+  trusting a pass.
 - **A claim about JS/Python template-literal divergence was wrong, and the ablation caught it before it
   shipped.** The first draft of `ts-ssrf-url-from-scanned-data` carried two `metavariable-regex` blocks
   (`^`[^`$]*`$`) to exclude static template literals, on the stated belief that JS diverged from Python —

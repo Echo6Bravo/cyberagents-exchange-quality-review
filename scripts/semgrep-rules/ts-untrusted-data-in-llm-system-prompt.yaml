@@ -72,6 +72,7 @@ rules:
     metadata:
       qr-dimension: 13
       cwe: "CWE-1427: Improper Neutralization of Input Used for LLM Prompting"
+      owasp: "A05:2025 Injection (prompt injection)"
       confidence: MEDIUM
     patterns:
       - pattern-either:

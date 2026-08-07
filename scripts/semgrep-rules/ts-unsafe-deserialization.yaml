@@ -71,6 +71,9 @@ rules:
     metadata:
       qr-dimension: 2
       cwe: "CWE-502: Deserialization of Untrusted Data / CWE-95: Eval Injection"
+      # Two categories, matching the two CWEs above and deliberately not narrowed to one: the
+      # deserialization half is an integrity failure, the eval half is injection.
+      owasp: "A08:2025 Software or Data Integrity Failures; A05:2025 Injection (eval half)"
       confidence: MEDIUM
     patterns:
       - pattern-either:
