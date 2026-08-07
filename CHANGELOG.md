@@ -20,16 +20,24 @@ Nothing yet.
   must have a CHANGELOG section; a commit claiming `Release X.Y.Z` must have the tag; a CHANGELOG
   section for a version must have the tag. The last two run on **every** trigger, not just tag
   pushes, so drift surfaces on the PR that introduces it rather than at release time.
-  Verified against the real defect (all three errors fire on the pre-tag repo) and with a negative
-  control (a `v9.9.9` tag with no CHANGELOG section fails).
+  One narrow carve-out, on `pull_request` only: a version section the PR *itself* adds may be
+  untagged, since the tag has to point at a merge commit that does not exist yet. Without it every
+  release PR would be red by construction and the only way to ship would be to merge a red
+  pipeline — which `CONTRIBUTING.md` forbids, so the gate would have forced a violation of this
+  repo's own rule. The carve-out is scoped by diffing the base branch's `CHANGELOG.md`, so a section
+  already on `main` and still untagged remains an error; an unreadable base fails loudly rather than
+  exempting everything, which would have quietly turned the carve-out into a blanket bypass.
+  Seven measured cases, not assumed: the release PR passes; **the `63e4fa0` defect still fails with
+  the carve-out active** (the control that matters); an untagged section on a `main` push fails; a
+  `v9.9.9` tag with no CHANGELOG section fails; a bogus base SHA fails loudly; and the post-tag state
+  passes on both `main` and tag-push triggers. The embedded Python was also extracted back out of the
+  YAML and compiled, because a heredoc that silently breaks reads as *passing*.
   The workflow now also triggers on `push: tags: ['v*']`.
 - **`CONTRIBUTING.md` documents how to cut a release**, including the ordering constraint the CI
-  check imposes (merge the CHANGELOG rename *before* tagging) and how to pick the bump.
+  check imposes (merge the CHANGELOG rename *before* tagging), the PR-only carve-out, the brief
+  window where `main` is legitimately red between merge and tag push, and how to pick the bump.
 - **Tags `v1.1.0` and `v1.2.0`.** `v1.1.0` is back-filled onto `63e4fa0`, the commit that documented
   it — accurate rather than retroactive, since the `## [1.1.0]` section has existed since 2026-08-04.
-
-
-### Added
 - **`scripts/tautology-scan.sh`** — heuristic grep over *test files* for assertions carrying an
   `or not <precondition>` escape hatch (dimension 11). This is the tautology shape
   `mutation-check.sh` structurally cannot find: the escape lives in the test, so no mutation to the

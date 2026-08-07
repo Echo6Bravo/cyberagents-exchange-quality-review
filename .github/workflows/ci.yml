@@ -119,14 +119,28 @@ jobs:
         # NOTE: the version headings in CHANGELOG.md use an EM DASH, not a hyphen. The regex accepts
         # either, so an editor's autocorrect cannot silently disable this gate -- a check that stops
         # matching is worse than no check, because it reads as passing.
+        #
+        # ONE narrow exemption, on pull_request only: a release PR's entire job is to add the
+        # `## [X.Y.Z]` section BEFORE the tag can exist, since the tag has to point at the merge
+        # commit. Without the exemption every release PR is red by construction and the only way to
+        # ship is to merge a red pipeline -- which CONTRIBUTING.md forbids, so the gate would force a
+        # violation of the repo's own rule. The exemption is scoped to sections the PR ITSELF
+        # introduces, computed by diffing against the base commit's CHANGELOG: a section that was
+        # already on the base branch and is still untagged is the 63e4fa0 defect and stays an error.
+        # Measured: with this exemption in place the job still fails on the pre-tag repo state that
+        # motivated it. `main` and tag pushes get no exemption at all, so the window where main is
+        # red is exactly the minute between merging and pushing the tag, which step 3 of
+        # CONTRIBUTING's release recipe closes.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           python3 - "$GITHUB_REF" <<'PY'
-          import re, subprocess, sys
+          import os, re, subprocess, sys
 
+          SEC_RE = r'(?m)^## \[(\d+\.\d+\.\d+)\][ \t]*[\u2014-]'
           src = open("CHANGELOG.md").read()
           errs = []
-          secs = {m.group(1) for m in
-                  re.finditer(r'(?m)^## \[(\d+\.\d+\.\d+)\][ \t]*[\u2014-]', src)}
+          secs = {m.group(1) for m in re.finditer(SEC_RE, src)}
           tags = set(subprocess.run(["git", "tag", "--list", "v*"],
                                     capture_output=True, text=True).stdout.split())
 
@@ -139,20 +153,40 @@ jobs:
               elif ver not in secs:
                   errs.append(f"tag {tag} has no '## [{ver}]' section in CHANGELOG.md")
 
+          # Versions this PR introduces are exempt from checks 2 and 3 (see the note above);
+          # anything already on the base branch is not. On main/tag pushes BASE_SHA is empty and
+          # `pending` stays empty, so nothing is exempt there.
+          pending = set()
+          base = os.environ.get("BASE_SHA", "").strip()
+          if base:
+              got = subprocess.run(["git", "show", f"{base}:CHANGELOG.md"],
+                                   capture_output=True, text=True)
+              if got.returncode == 0:
+                  pending = secs - {m.group(1) for m in re.finditer(SEC_RE, got.stdout)}
+              else:
+                  # Fail loudly rather than exempting everything: a silent fallback here would
+                  # turn the one narrow carve-out into a blanket pull_request bypass.
+                  errs.append(f"cannot read CHANGELOG.md at base {base[:8]}; refusing to guess"
+                              " which sections are new")
+
           log = subprocess.run(["git", "log", "--format=%h %s"],
                                capture_output=True, text=True).stdout
           for line in log.splitlines():
               sha, _, subj = line.partition(" ")
               m = re.match(r'(?i)release\s+v?(\d+\.\d+\.\d+)\b', subj.strip())
-              if m and f"v{m.group(1)}" not in tags:
+              if m and f"v{m.group(1)}" not in tags and m.group(1) not in pending:
                   errs.append(f'commit {sha} claims "{subj}" but tag v{m.group(1)} does not exist')
 
           for ver in sorted(secs):
               if f"v{ver}" not in tags:
-                  errs.append(f"CHANGELOG has a [{ver}] section but no tag v{ver}")
+                  if ver in pending:
+                      print(f"note: [{ver}] is added by this PR; tag is created after merge")
+                  else:
+                      errs.append(f"CHANGELOG has a [{ver}] section but no tag v{ver}")
 
           print(f"CHANGELOG sections: {sorted(secs)}")
           print(f"tags present:       {sorted(tags)}")
+          print(f"new in this PR:     {sorted(pending)}")
           for e in errs:
               print(f"::error::{e}")
           sys.exit(1 if errs else 0)
