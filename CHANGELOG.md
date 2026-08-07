@@ -73,6 +73,18 @@ All notable changes to this skill are documented here. The format follows
   instead: writing the exclusion with **backticks** suppresses all template literals including
   interpolated ones, which measurably hides a real SSRF and would have left the rule near-vacuous while
   looking complete.
+- **A `paths:` filter that ablates as inert, because the ablation itself was measured wrong.**
+  `ts-ssrf-url-from-scanned-data`'s test-file exclusion was re-measured four ways after the rules landed,
+  and the result inverts the obvious reading: with an empty `.semgrepignore` in the corpus root the filter
+  takes **173 findings / 1205 files down to 60 / 810**, but with semgrep's bundled ignore list active it
+  reports **60 either way** — because that list already drops the same `tests/` directories. Anyone
+  ablating the filter on a default checkout would correctly observe "no change" and delete something that
+  removes 113 findings. `ts-path-write-without-containment` has the same dependency in milder form
+  (41/880 without the override, 43/1205 with it), which matters more there because 32 of its 43 hits are
+  in test files. Both rule headers now state the override alongside their numbers, and `CONTRIBUTING.md`
+  makes it a rule: ablate a `paths:` filter with the override in place, or the measurement lies. This is
+  the same silent-zero shape Gate 6 already tests for, arriving through the one path that made a
+  *protective* pattern look useless rather than making a broken rule look fine.
 - **`ts-binds-all-interfaces` had a blind spot that made its zero look like good news.** Measuring the
   TS rules against 1074 TypeScript files from six real MCP servers, this rule reported 0 findings — in a
   corpus containing **102 `.listen(` calls and 17 files mentioning `0.0.0.0`**. The previous header

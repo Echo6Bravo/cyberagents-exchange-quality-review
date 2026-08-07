@@ -51,6 +51,14 @@
 # queue, which is why this rule carries NO `paths:` filter while its SSRF sibling needed one (that rule
 # measured 182). Do not add one here without re-measuring.
 #
+# THOSE NUMBERS REQUIRE AN EMPTY `.semgrepignore` IN THE CORPUS ROOT, per the technique in SKILL.md's
+# toolkit section, and this rule is the one where it matters most -- 32 of its 43 hits are in test
+# files, exactly what the bundled ignore list drops. Re-measured both ways to state it rather than
+# assume it: **without the override, 41 findings on 880 files** and `Files matching .semgrepignore
+# patterns: 97` on stderr; with it, 43 on 1205. So a re-measurement that forgets the override lands
+# two findings low while printing a clean-looking total -- the silent-zero shape this ruleset's Gate 6
+# exists to catch. Record the override alongside any number you quote from this rule.
+#
 # THE MOST INSTRUCTIVE HIT IS A FALSE POSITIVE, and it is the exact shape the taint-mode note above
 # predicts. `servers/src/filesystem/lib.ts:165` writes to a bare `filePath` parameter with no guard in
 # the function -- and it is CORRECT: the only caller is `index.ts:374`, which does
