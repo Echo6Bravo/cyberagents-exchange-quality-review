@@ -21,6 +21,14 @@
 # `schema: yaml.CORE_SCHEMA` both correctly do not match. A rule keyed on `yaml.load` alone would fire
 # on every correct call in every v4 codebase.
 #
+# SECOND MEASUREMENT, and it is the useful one for MCP reviews: 0 findings across 1074 TypeScript files
+# from six real MCP servers (13 further files failed to parse and were not analysed), a corpus containing
+# **0 occurrences of `eval(`, `new Function(`, or an unsafe deserializer**. Unlike the browser corpus
+# below, this population vendors nothing -- so the "block of findings from one vendored library" failure
+# mode did not arise, and the zero reflects a genuinely clean population rather than an absent construct
+# alone. It is still not a precision measurement: zero hits cannot distinguish a precise rule from an
+# inapplicable one. What it does establish is that the rule adds no noise to a modern TS server repo.
+#
 # MEASURED HIT RATE, so the claim is bounded rather than implied: 16 findings across 1138 real
 # first-and-third-party JS/TS files (392k lines, minified excluded). All 16 were real `eval` /
 # `new Function` calls -- no pattern misfires -- and all 16 were in VENDORED code: prototype.js, YUI,

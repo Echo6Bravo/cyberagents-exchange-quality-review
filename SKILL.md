@@ -141,6 +141,30 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   these rules found nothing because that corpus contains **no instances of what they look for** — a
   true negative with no discriminating power. "0 false positives" from such a run is an overclaim of
   exactly the kind dimension 12 exists to catch; say "validated on planted-defect fixtures only."
+  **Then check whether the construct is present before believing the zero — a zero can be a blind spot
+  in the rule.** Re-measuring the TS rules against 1074 TypeScript files from six real MCP servers
+  turned one of those comfortable zeros into a rule defect. `ts-binds-all-interfaces` reported nothing
+  even though the corpus held 102 `.listen(` calls and 17 files mentioning `0.0.0.0`; the cause was
+  that modern MCP servers bind via a framework *factory* (`createMcpExpressApp({ host: "0.0.0.0" })`),
+  which the receiver-bound `$A.listen(...)` pattern could not match. It missed 8 real sites. The
+  three-question drill: does the rule fire on its own fixture (yes — so it is not broken), does the
+  target construct appear in the corpus (yes — so the corpus is not empty), and if both, **why is the
+  count zero?** Skipping the third question is this skill's own dimension 1, applied to its tooling.
+  **Expect wildcard CORS on MCP servers and triage intent, not presence.** That corpus produced 13
+  `ts-wildcard-cors` hits, 8 in production paths — the highest-firing rule of the set, and every hit
+  genuine. Cross-origin access to OAuth metadata and token endpoints is close to a house style there.
+  Sort hits into deliberate-and-reasoned (a comment explains why web clients need the origin),
+  deliberate-and-self-flagged (`// use "*" with caution in production`), and unremarked-on-a-tool-
+  endpoint. Only the third is usually worth raising, and reporting all three as one number is noise.
+  **A rule can be right about the construct and still find the one thing that matters.** The same run
+  produced 3 `ts-weak-hash-or-random` hits; two were cache-key uniquifiers, and one was `Math.random()`
+  minting the **`jti` replay-protection claim** of a private-key-JWT client assertion in the official
+  MCP TypeScript SDK — in a function that had already verified `globalThis.crypto` was available. A
+  low-precision rule still needs every hit read, because the hit that matters sits in an auth path.
+  **Scope N/A honestly by surface.** `ts-token-in-localstorage` found nothing across all 1074 files
+  because a Node MCP server has no DOM and calls no web-storage API at all. On a submission with no
+  browser surface that rule is **N/A, not passed** — "no credential-storage issues found" after
+  scanning only a server is the dimension 12 overclaim in miniature.
   **Scope the scan to first-party source when you can.** All 16 `ts-unsafe-deserialization` hits in
   that measurement were in *vendored* libraries (prototype.js, YUI, socket.io, ace) — real `eval`
   calls, correctly flagged, and all the same already-known fact about code the submitter did not write.

@@ -11,9 +11,25 @@
 # why dimension 17 escalates this to High when the endpoint exposes tools or scan data and nothing
 # authenticates the caller. Severity here is location-dependent, and the message says so.
 #
-# NO FALSE-POSITIVE RATE IS CLAIMED. Against 1138 real JS/TS files this rule reported 0 findings, but
-# the corpus contains 0 occurrences of `.listen(` -- so the zero measures the corpus, not the rule.
-# Validated on planted-defect fixtures only; do not report it as "0 false positives."
+# MEASURED against 1074 real TypeScript files from six MCP servers (the official `servers` and
+# `typescript-sdk` repos, plus context7, Figma-Context-MCP, mcp-server-cloudflare, playwright-mcp;
+# 13 further files failed to parse and were NOT analysed, so 1074 is the honest denominator, not 1087).
+# 8 findings, ALL of them in `.examples.` / guide files, 0 in production paths.
+#
+# That measurement is the reason this rule changed. The earlier version reported 0 findings here and
+# the header credited the corpus rather than the rule -- correctly, since that corpus had no `.listen(`
+# at all. This one has 102 occurrences of `.listen(` and 17 files mentioning `0.0.0.0`, and the rule
+# STILL reported 0. The cause was not a clean corpus: the dominant idiom in the current MCP SDK is a
+# framework factory (`createMcpExpressApp({ host: "0.0.0.0" })`), which has no `.listen` receiver for
+# the old pattern to bind. A zero that looks like good news and is actually a blind spot is precisely
+# this skill's dimension 1, found in its own rule set.
+#
+# STILL NO FALSE-POSITIVE RATE IS CLAIMED, for a reason worth stating: all 8 hits are example code
+# that binds broadly ON PURPOSE to demonstrate deployment, and 6 of them pair it with an explicit
+# `allowedHosts` allowlist. Whether those are false positives depends on the question being asked --
+# they are not defects, but they ARE the shape a reader copies into production. Counting them either
+# way would overstate what was measured. What IS established: the rule fires on the real idiom, and it
+# found no production defect in this corpus.
 #
 # KNOWN FALSE POSITIVES (measured; triage by reading):
 #   * a containerized service that MUST bind 0.0.0.0 to be reachable from outside its namespace. This
@@ -52,4 +68,12 @@ rules:
       # The trailing `...` covers the callback form too; measured to match both `listen(p, "0.0.0.0")`
       # and `listen(p, "0.0.0.0", () => {})` with a single pattern.
       - pattern: $A.listen($P, "0.0.0.0", ...)
-      - pattern: '$A.listen({..., host: "0.0.0.0", ...})'
+      # Any call taking a `host: "0.0.0.0"` option, with NO receiver requirement. This deliberately
+      # replaces the narrower `$A.listen({...})` spelling, which it subsumes (measured: it still
+      # matches `server.listen({host: "0.0.0.0", port: P})`). The widening came from measuring the
+      # rule against 1074 real MCP-server TS files, where the dominant idiom turned out to be a
+      # framework FACTORY -- `createMcpExpressApp({ host: "0.0.0.0" })` -- not `.listen()` at all.
+      # The receiver-bound pattern missed 8 real sites in the current MCP TypeScript SDK. Binding
+      # the receiver to `.listen` looked more precise and simply did not match how these servers
+      # are written.
+      - pattern: '$F({..., host: "0.0.0.0", ...})'

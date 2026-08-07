@@ -25,6 +25,19 @@
 # but 4 files is far too small a denominator to call a false-positive rate. Treat this as "did not
 # misfire on the handful of real LLM calls available to test against," not as a precision measurement.
 #
+# SECOND MEASUREMENT, with a much better denominator: 0 findings across 1074 TypeScript files from six
+# real MCP servers (13 further files failed to parse and were not analysed), of which **34 contain a
+# system-prompt channel** (`role: "system"`, `systemPrompt`, or `system_prompt`). That is an 8.5x larger
+# population of the exact construct this rule keys on, and it still did not misfire once.
+#
+# This zero is the most informative of the set, and it is still NOT a false-positive rate. What it
+# supports: on 34 real system-prompt constructions the rule produced no noise. What it does not support:
+# any claim about recall. These servers largely take a system prompt as a caller-supplied parameter
+# rather than building one by interpolation, so the defect shape mostly is not present to be found --
+# and the rule's central blind spot (a prompt assembled a function call away from the sink, where no
+# single expression contains both the channel and the untrusted value) would hide it if it were. A
+# reviewer must still read the prompt-assembly path by hand; this rule is a tripwire, not a proof.
+#
 # KNOWN FALSE POSITIVES (measured; triage by reading -- and the triage question is specific):
 #   * interpolating something the TOOL controls, not the scanned data: a tenant id from config, a
 #     hardcoded severity list, the current date, a model name. These are real FPs and probably the
