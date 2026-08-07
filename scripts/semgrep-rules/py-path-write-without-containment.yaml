@@ -30,6 +30,11 @@
 # the `.with_suffix()` form was written and MEASURED TO BE INERT (identical findings on all 7
 # probe files), so it was discarded rather than shipped as a pattern that looks protective and
 # does nothing. Triage this shape as a question, per the house rule for every probe here.
+#
+# TYPESCRIPT SIBLING: `ts-path-write-without-containment`. Same dimension and CWE, separate rule
+# because nothing transfers: Node has no `is_relative_to()`, so the guard idiom is the string
+# comparison `resolved.startsWith(base + path.sep)` -- and a missing separator is a real bug that
+# rule cannot distinguish from a correct guard. Read its header before trusting its silence.
 rules:
   - id: py-path-write-without-containment
     languages: [python]

@@ -1,0 +1,95 @@
+# Dimension 3 (failure behaviour), inverted. CWE-636 / CWE-703.
+# Maps to OWASP 2025 A10 Mishandling of Exceptional Conditions.
+#
+# WHY THIS EXISTS as a separate rule from `py-failopen-on-exception`, rather than adding `js`/`ts` to
+# that rule's `languages`: the patterns are not shared. Python's `try/except/pass` has no JS analogue
+# (an empty `catch {}` block is the closest, and it is a different shape), and JS has TWO catch
+# spellings where Python has one. A single rule would need both syntax families anyway, and the FP
+# classes differ by language. Same dimension, same CWE, separate rule, cross-referenced both ways.
+#
+# WHAT IT ADDS over the existing toolkit: nothing else here reads TypeScript for this. `bandit` B110
+# (`try/except/pass`) and `ruff` BLE001/S110 are Python-only and cannot parse TS at all. So where the
+# Python side is double-covered, TS was uncovered.
+#
+# MEASURED BEFORE THE RULE WAS WRITTEN, which is the point -- question 2 of the three-question drill
+# ("does the construct appear in the corpus?") was answered first, so this rule was designed against
+# real code instead of imagined code. Scanning the 1074-file MCP corpus (six real servers) for catch
+# blocks returning a permissive value found 33 sites in 21 files, distributed:
+#
+#     null: 18     undefined: 11     []: 4     true: 0
+#
+# THAT DISTRIBUTION IS WHY THIS RULE MATCHES ONLY `true` AND `[]`, and the reasoning is the same trade
+# the Python rule documents, only stronger here. `return null` / `return undefined` in a JS catch is
+# overwhelmingly "optional value absent" -- 29 of 33 hits, essentially the language's idiom for a
+# lookup that did not resolve -- and matching them would make this rule ~88% noise on real code. A
+# rule whose findings are mostly noise gets disabled, which is worse than a documented blind spot.
+# `true` measured ZERO occurrences and is kept anyway: it is the highest-severity shape (a security
+# predicate answering "allowed?" / "compliant?") and costs nothing in false positives to look for.
+#
+# THE FOUR PATTERN BRANCHES ARE NOT REDUNDANT -- ablation-measured, do not "simplify" them:
+#   * `catch { ... }` (ES2019 optional catch binding) and `catch ($E) { ... }` are DIFFERENT patterns
+#     to semgrep. Measured on a 6-case probe: the unbound form alone matched lines [1,3] and MISSED
+#     [2,4], i.e. every `catch (e)` site. All four real `return []` sites in the corpus happen to use
+#     the unbound form, so testing against those alone would have hidden this. This is exactly the
+#     blind spot `ts-binds-all-interfaces` shipped with -- a pattern that looks complete because the
+#     sites you happened to look at all share one spelling.
+#   * The LEADING `...` inside each catch body is load-bearing: measured, dropping it loses the
+#     `log(err); return []` case, which is the most common real spelling (the log line is what
+#     convinces the author the error was handled).
+#
+# KNOWN FALSE POSITIVE CLASS, measured on the corpus and NOT excluded. All 4 real `return []` hits are
+# in this class, so expect it to dominate:
+#   * A `catch` that returns `[]` for a genuinely absent collection -- `readdir` on a directory that
+#     may not exist (`context7/.../skill.ts:672`), a dependency list when no manifest is present
+#     (`deps.ts:33`), `JSON.parse` of a body that may be SSE rather than JSON
+#     (`typescript-sdk/test/.../hosting-entry-stamping.test.ts:84`), or an MCP completions call to a
+#     server that declares no completions capability (`examples/cli-client/host/host.ts:288`).
+#     All four are correct code. The distinguishing question no pattern can answer: does the caller
+#     treat `[]` as "nothing there" or as "nothing found by a check that ran"? Only the second is a
+#     fail-open. Triage heuristic, same as the Python rule: if the `try` body ENUMERATES or PARSES,
+#     `[]` is probably honest; if it SCANS, VALIDATES, or AUTHORIZES, `[]` reports a clean bill of
+#     health for work that did not happen.
+#   * `return true` in a catch around a best-effort cleanup or an "already in the desired state"
+#     check (e.g. `mkdir` failing because the directory exists). Read the try body.
+#
+# KNOWN BLIND SPOTS, all deliberate:
+#   * `return null` / `return undefined` / `return {}` / `return 0` -- see the distribution above.
+#   * An empty `catch {}` that swallows the error and falls through to a permissive value AFTER the
+#     block. The Python rule catches the `pass` equivalent; the JS shape has no return to key on.
+#   * `.catch(() => [])` and `.catch(() => true)` on a promise chain -- the same defect in expression
+#     form. NOT matched here. Measured absent from the corpus in the permissive-value form, so it is
+#     recorded as a gap rather than guessed at; add it when a corpus produces one.
+#   * `try/finally` with a permissive default assigned before the try.
+#   * Any fail-open reached through a wrapper (`safeParse`, `tryOr(default)`), which is invisible to
+#     syntax and is dimension 3 prose work.
+rules:
+  - id: ts-failopen-on-exception
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim3: this catch block returns a PERMISSIVE value instead of failing closed. If the try block
+      contains a security decision, a parse, or a scan, this reports success for work that did not
+      happen -- `true` reads as "allowed/compliant" and `[]` reads as "no findings", and a caller
+      cannot distinguish either from a clean result. Ask whether the caller reads `[]` as "nothing
+      there" (fine) or "nothing found by a check that ran" (a fail-open). Fix by failing closed
+      (rethrow, or return false), or by returning a third state the caller must handle explicitly
+      (`undefined`-with-a-check, a Result type) so "did not run" never renders as "passed".
+      `bandit` B110 and `ruff` BLE001/S110 cover the Python equivalents and cannot read TS; the
+      Python counterpart here is `py-failopen-on-exception`.
+    metadata:
+      qr-dimension: 3
+      owasp: "A10:2025 Mishandling of Exceptional Conditions"
+      cwe: "CWE-636: Not Failing Securely ('Failing Open')"
+      confidence: LOW
+    pattern-either:
+      # ES2019 optional catch binding. Measured: this does NOT match `catch (e)`.
+      - pattern: |
+          try { ... } catch { ... return true; }
+      - pattern: |
+          try { ... } catch { ... return []; }
+      # Bound error parameter. Measured: needed as its own branch -- 2 of 4 probe cases are missed
+      # without it, including the log-then-return shape.
+      - pattern: |
+          try { ... } catch ($E) { ... return true; }
+      - pattern: |
+          try { ... } catch ($E) { ... return []; }

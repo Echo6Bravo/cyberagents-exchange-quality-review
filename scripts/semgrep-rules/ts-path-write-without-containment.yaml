@@ -1,0 +1,130 @@
+# Dimension 2 (input safety), path-traversal sink. CWE-22.
+# TypeScript counterpart of `py-path-write-without-containment`; read that header too, since the
+# reasoning about what a lexically-present guard does and does not prove is shared, as is the
+# measured reason for not using taint mode.
+#
+# WHY IT IS A SEPARATE RULE and not `languages: [python, js, ts]` on the Python one: nothing
+# transfers. The sinks differ (`Path.write_text` vs `fs.writeFileSync`), and the GUARD SPELLINGS are
+# not even the same idea. Python has a purpose-built containment predicate, `is_relative_to()`. Node
+# has none: the idiom is `resolved.startsWith(base + path.sep)` -- string prefix comparison, which is
+# why the `+ sep` matters and why so much real code gets it wrong. A single rule would share only the
+# CWE.
+#
+# WHAT THIS RULE DOES NOT PROVE -- read before trusting a zero. It checks that a containment guard is
+# LEXICALLY PRESENT in the same function as the write. It does not prove the guard is correct,
+# reachable, or applied to the variable actually written, and it is NOT taint analysis: a value that
+# reaches the path through a helper is invisible. Dimension 2's prose question stays the primary
+# proof; this is the cheap backstop.
+#
+# IN PARTICULAR, THE GUARD THIS RULE ACCEPTS IS OFTEN WRONG. `dest.startsWith(base)` WITHOUT the
+# trailing separator is a real, common bug: with `base = "/data/out"`, the path `/data/output-evil`
+# passes the check. The rule cannot tell `startsWith(base)` from `startsWith(base + sep)` without
+# rejecting most correct code too, so it accepts both and this comment is where that is recorded.
+# When triaging a file this rule stays SILENT on, check the separator by hand -- the silence means a
+# guard exists, not that it works.
+#
+# GUARD SPELLINGS WERE MEASURED, NOT IMAGINED. The Python counterpart's header records the lesson that
+# a rule recognizing one spelling of a guard punishes everyone who writes it another way, so the
+# corpus was grepped first. On the 1074-file MCP corpus: `startsWith(` appears 251 times,
+# `path.resolve(` 55, `isAbsolute(` 14, `path.relative(` 11. The real containment guards found near
+# writes were:
+#     if (!destFile.startsWith(resolve(OUTPUT_DIR) + sep)) { ... }
+#     if (!requested.startsWith(DOCS_ROOT + path.sep)) { ... }
+#     if (path.relative(base, dest).startsWith("..")) { ... }
+# All three are recognized below, in negated and positive forms, and each was ablation-tested as
+# load-bearing: with only the first, the other two are FALSE POSITIVES ON CORRECT CODE.
+#
+# WHY NOT `mode: taint`: same measured reason as the Python counterpart, which is worth restating
+# because it is the counterintuitive part. Measured on that rule's exact vulnerability shape, a taint
+# rule flagged the FIXED function and MISSED the vulnerable one -- a confident finding on the wrong
+# line, more dangerous than a zero because it reads as working coverage. Default taint mode is
+# intraprocedural and never crosses the helper boundary real code always has; interprocedural
+# analysis needs Semgrep Pro (login-gated binary, unavailable behind a TLS-intercepting proxy). Do not
+# "improve" this into taint mode without re-measuring which line it lands on.
+#
+# WHAT IT ADDS over the existing toolkit: nothing else here reads TypeScript for this shape. `bandit`
+# does not raise it in Python at any severity and cannot parse TS at all, and `ruff` is Python-only.
+#
+# MEASURED ON THE CORPUS: 43 findings on 1205 files scanned (1 file unparseable, reported as a syntax
+# error, not silently dropped). 32 of the 43 are in test files -- overwhelmingly a test writing a
+# fixture into its own `mkdtemp` directory -- leaving 11 in shipped source. That is a usable triage
+# queue, which is why this rule carries NO `paths:` filter while its SSRF sibling needed one (that rule
+# measured 182). Do not add one here without re-measuring.
+#
+# THE MOST INSTRUCTIVE HIT IS A FALSE POSITIVE, and it is the exact shape the taint-mode note above
+# predicts. `servers/src/filesystem/lib.ts:165` writes to a bare `filePath` parameter with no guard in
+# the function -- and it is CORRECT: the only caller is `index.ts:374`, which does
+# `const validPath = await validatePath(args.path)` first. The containment lives one frame up, which is
+# invisible to an intraprocedural rule. That file is also the best example of a guard this rule cannot
+# assess: it uses the `wx` flag and an atomic rename specifically to defeat symlink races, defences no
+# pattern here can see. Verified by reading both call sites, not assumed.
+#
+# KNOWN FALSE POSITIVE CLASSES (expect these; the corpus has 134 write sinks, most with a non-literal
+# first argument):
+#   * CONTAINMENT ENFORCED BY THE CALLER, as measured above. The commonest real FP, and unfixable
+#     without interprocedural analysis.
+#   * A path built through an intermediate variable from an entirely internal value -- a cache dir, a
+#     temp file, a build artifact. The single-expression literal exclusions cannot see through a
+#     variable. This is the same measured FP the Python rule documents.
+#   * A test writing a fixture into its own temp directory -- 32 of the 43 corpus hits.
+#   * A CLI tool writing where the user pointed it. If the path IS the user's intent, containment is
+#     not the requirement; that is dimension 2 prose, not a defect.
+#   * A write guarded by a spelling not listed below (`isAbsolute` checks, regex tests, a
+#     `realpath` comparison, or containment enforced in a caller).
+#
+# KNOWN BLIND SPOTS, all deliberate:
+#   * `node:fs/promises` imported as a bare `writeFile` -- only `fs.`-qualified and `fs.promises.`
+#     spellings are matched. A codebase importing `{ writeFile }` directly reports zero, and that zero
+#     means nothing. This is the single most likely reason for a false clean bill of health here.
+#   * `fs.rename`, `fs.copyFile`, `fs.mkdir`, `fs.rmSync`, `tar`/`unzip` extraction (the classic
+#     archive-traversal sink), and any wrapper.
+#   * Symlinks. A contained path that IS a symlink writes wherever it points, and no pattern here can
+#     see that. `realpath` before the check is the fix, and its absence is invisible to this rule.
+rules:
+  - id: ts-path-write-without-containment
+    languages: [js, ts]
+    severity: ERROR
+    message: >-
+      dim2: file write with no containment guard in the same function. If any component of this path
+      comes from scanned data, tool input, or an API response, it can escape the intended directory
+      with `../` -- and an identifier allowlist is NOT a containment check, since real cloud
+      identifiers routinely contain "/". Fix by resolving the path and comparing it against the base
+      IMMEDIATELY before the write: `path.resolve(base, name).startsWith(path.resolve(base) + path.sep)`.
+      The trailing separator is not optional -- without it, `/data/output-evil` passes a check against
+      `/data/out`. Consider `fs.realpath` first, since a contained symlink writes wherever it points.
+      Do not deduce containment from upstream validation. This rule proves only that a guard is
+      lexically present, never that it is correct. Python counterpart:
+      `py-path-write-without-containment`.
+    metadata:
+      qr-dimension: 2
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: LOW
+    patterns:
+      - pattern-either:
+          - pattern: fs.writeFileSync($P, ...)
+          - pattern: fs.writeFile($P, ...)
+          - pattern: fs.appendFileSync($P, ...)
+          - pattern: fs.appendFile($P, ...)
+          - pattern: fs.createWriteStream($P, ...)
+          - pattern: fs.promises.writeFile($P, ...)
+          - pattern: fs.promises.appendFile($P, ...)
+      # A hardcoded filename carries no traversal risk from input data. Measured, and the same
+      # interpolation sensitivity the Python rule relies on: `"..."` also matches a STATIC template
+      # literal and does NOT match an interpolating one, so `` `out-${name}.json` `` still fires.
+      # Both the `fs.` and `fs.promises.` spellings are needed -- `fs.$M(...)` does not match
+      # `fs.promises.writeFile(...)`.
+      - pattern-not: fs.$M("...", ...)
+      - pattern-not: fs.promises.$M("...", ...)
+      # `path.join(dir, "literal")` is the commonest safe spelling and is excluded on the same logic.
+      - pattern-not: fs.$M(path.join(..., "..."), ...)
+      - pattern-not: fs.promises.$M(path.join(..., "..."), ...)
+      # The three corpus-measured guard spellings, negated and positive. All ablation-tested
+      # load-bearing. See the header on why an accepted guard may still be WRONG (missing `+ sep`).
+      - pattern-not-inside: |
+          if (!$D.startsWith(...)) { ... }
+          ...
+      - pattern-not-inside: |
+          if ($D.startsWith(...)) { ... }
+      - pattern-not-inside: |
+          if ($R.relative(...).startsWith("..")) { ... }
+          ...
