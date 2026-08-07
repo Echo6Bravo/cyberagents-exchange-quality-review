@@ -31,6 +31,27 @@
 # TO BE EQUIVALENT -- it suppressed the security-import probe identically, because the import is the
 # first statement in both -- so the narrower pattern was discarded rather than shipped as a
 # distinction that does not exist. Ask about silently-skipped security imports in prose, not here.
+#
+# A SECOND FP CLASS, found by scanning the official MCP `servers` repo (this rule fires on Python, and
+# that repo's git server is Python): `mcp_server_git/server.py:473` --
+#
+#     for root in roots_result.roots:
+#         try:
+#             git.Repo(path)
+#             repo_paths.append(str(path))
+#         except git.InvalidGitRepositoryError:
+#             pass
+#
+# This is a FILTER, not a fail-open: the loop is deciding which candidate paths are git repositories,
+# and `pass` means "not one of them, skip it." Same syntax as the defect, opposite meaning -- the
+# distinguishing feature is that the handler discards a loop ITERATION rather than a security decision,
+# which no pattern can see. Deliberately NOT excluded: an exclusion keyed on `except <SpecificError>:
+# pass` inside a `for` would suppress real fail-opens in retry and per-item authorization loops, which
+# is a worse trade than one readable FP. Triage rule of thumb: if the `try` body appends to a collection
+# on success, it is probably a filter; if it GUARDS something, it is probably a fail-open.
+#
+# So the measured FP rate is 2 findings across 111 real Python files, both of the same shape (a narrow
+# `except` around an optional operation), and both correctly identified by reading three lines.
 rules:
   - id: py-failopen-on-exception
     languages: [python]

@@ -128,6 +128,20 @@ tells the assistant to repeat them rather than report a bare zero:
 - **Three rules found nothing because that corpus contains no instances of what they look for.** A
   laptop's JS is mostly browser and CLI code, with no server TLS or bind configuration in it. That is
   a true negative with no discriminating power, not a precision result.
+- **A second measurement, on the population these rules are actually for.** The TS rules were re-run
+  against **1074 TypeScript files from six real MCP servers** (official `servers` + `typescript-sdk`,
+  context7, Figma-Context-MCP, mcp-server-cloudflare, playwright-mcp; 13 further files failed to parse
+  and are excluded from that denominator). 25 findings, every one triaged by reading the source.
+  `ts-wildcard-cors` was the highest-firing at 13 (8 in production paths) and every hit was genuine —
+  wildcard CORS is near house style on MCP servers, so the rule's job there is classifying *intent*.
+  `ts-weak-hash-or-random` surfaced a real defect in the official SDK: `Math.random()` generating the
+  **`jti` replay-protection claim** of a private-key-JWT client assertion, in a function that had
+  already confirmed `globalThis.crypto` was available.
+- **That run also found a defect in one of these rules, which is the point of measuring.**
+  `ts-binds-all-interfaces` reported zero against a corpus holding 102 `.listen(` calls, because modern
+  MCP servers bind via a framework factory rather than `.listen()`. It was missing 8 real sites. A zero
+  is only evidence after you have checked that the construct is present — otherwise it is a blind spot
+  wearing a passing grade.
 - **Vendored code dominates the hits.** All 16 `eval`/`new Function` findings were in prototype.js,
   YUI, socket.io, and ace — correctly flagged, and all the same already-known fact about code the
   submitter didn't write. Scope scans to first-party source, or a vendored bundle will make a review

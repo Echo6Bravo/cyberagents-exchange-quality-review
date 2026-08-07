@@ -12,9 +12,28 @@
 # credentials), so the exposure is the endpoint's *unauthenticated* surface -- which for a local MCP
 # server is typically all of it.
 #
-# NO FALSE-POSITIVE RATE IS CLAIMED. Against 1138 real JS/TS files this rule reported 0 findings, but
-# the corpus contains 0 occurrences of `Access-Control-Allow-Origin` -- so the zero measures the corpus,
-# not the rule. Validated on planted-defect fixtures only; do not report it as "0 false positives."
+# MEASURED TWICE, on two deliberately different populations.
+#
+#   * 1138 browser-extension / library JS/TS files: 0 findings -- but that corpus contains 0 occurrences
+#     of `Access-Control-Allow-Origin`, so the zero measured the corpus, not the rule.
+#   * 1074 TypeScript files from six real MCP servers (official `servers` + `typescript-sdk`, context7,
+#     Figma-Context-MCP, mcp-server-cloudflare, playwright-mcp; 13 further files failed to parse and
+#     were not analysed): **13 findings, 8 of them in production paths** -- the highest-firing rule in
+#     this set. Every one was read and every one is a genuine wildcard; there were no pattern misfires.
+#
+# This is the corpus this rule was designed for, and the hit rate says something about MCP servers
+# rather than about the rule: wildcard CORS is close to a house style there, because browser-based
+# clients need cross-origin access to metadata and token endpoints. Three distinct intents showed up,
+# and they triage differently:
+#   1. deliberate and reasoned -- `router.use(cors())` on OAuth metadata/token/revoke/register handlers
+#      in the SDK, each carrying a comment saying web clients on any origin must reach it. Defensible
+#      for public metadata documents; still worth asking on `token`.
+#   2. deliberate and self-flagged -- `origin: "*", // use "*" with caution in production` in the
+#      `everything` demo server. The code already knows.
+#   3. unremarked -- a bare wildcard with no comment on a full MCP endpoint, which is the case actually
+#      worth raising.
+# A reviewer using this rule on an MCP submission should expect a hit and should be asking which of the
+# three it is. Do NOT report this rule as "0 false positives"; report the intent classification.
 #
 # KNOWN FALSE POSITIVES (measured; triage by reading):
 #   * `cors()` bare and `origin: true` are both flagged, and both are occasionally deliberate on a

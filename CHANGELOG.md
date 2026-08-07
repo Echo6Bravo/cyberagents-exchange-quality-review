@@ -6,7 +6,63 @@ All notable changes to this skill are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+- **`ts-binds-all-interfaces` had a blind spot that made its zero look like good news.** Measuring the
+  TS rules against 1074 TypeScript files from six real MCP servers, this rule reported 0 findings — in a
+  corpus containing **102 `.listen(` calls and 17 files mentioning `0.0.0.0`**. The previous header
+  credited the empty result to the corpus, which was true of the browser-extension corpus it was written
+  against and false here. The real cause: modern MCP servers bind through a framework *factory*
+  (`createMcpExpressApp({ host: "0.0.0.0" })`), which has no `.listen` receiver for `$A.listen(...)` to
+  bind, so the rule missed **8 real sites** in the current MCP TypeScript SDK. Replaced the narrow
+  `$A.listen({...})` spelling with a receiver-less `$F({..., host: "0.0.0.0", ...})`, which subsumes it
+  (measured: `server.listen({host: ...})` still matches). Paired test: ablating the new pattern makes
+  `semgrep test` FAIL naming all four factory lines, so the guard is real. A rule that looked more
+  precise simply did not match how the code it targets is written.
+
+### Changed
+- **Every TypeScript rule now carries a measurement against real MCP-server code**, closing the one
+  place this repo made a weaker claim than its Python side (Python rules were measured against 65 real
+  files; the TS rules had only planted fixtures). Corpus: the official `servers` and `typescript-sdk`
+  repos plus context7, Figma-Context-MCP, mcp-server-cloudflare, and playwright-mcp. **13 of 1087 files
+  failed to parse and were not analysed, so 1074 is the honest denominator** — a detail that would
+  otherwise silently inflate every rate below. `github-mcp-server` was dropped from the corpus after
+  inspection: it is Go with a 10-file TS UI, and counting it would have implied breadth it does not add.
+
+  | Rule | Findings | Reading |
+  |---|---|---|
+  | `ts-wildcard-cors` | **13** (8 production) | highest-firing; all genuine. Near house style on MCP servers, since browser clients need cross-origin access to OAuth metadata and token endpoints. Three intents now documented — reasoned, self-flagged, and unremarked — because only the third is usually worth raising |
+  | `ts-binds-all-interfaces` | **8** (0 production) | all in `.examples.`/guide files, 6 pairing the broad bind with an `allowedHosts` allowlist. Found only after the fix above |
+  | `ts-weak-hash-or-random` | **3** (2 production) | one is a genuine defect — see below |
+  | `ts-unsafe-deserialization` | 0 | corpus has no `eval` / `new Function` / unsafe deserializer, and vendors nothing |
+  | `ts-untrusted-data-in-llm-system-prompt` | 0 | **34 files do contain a system-prompt channel** — an 8.5x better denominator than the previous measurement's 4, with no misfires |
+  | `ts-token-in-localstorage` | 0 | **vacuous**: 0 occurrences of `localStorage`/`sessionStorage`, since a Node server has no DOM. Now documented as **N/A rather than passed** on submissions with no browser surface |
+  | `ts-tls-verification-disabled` | 0 | **vacuous**: 0 occurrences of `rejectUnauthorized` in any form, twice over now |
+
+  Every one of the 25 findings was triaged by reading the source; none is reported on a count alone.
+- **A real security defect found in the official MCP TypeScript SDK**, recorded in
+  `ts-weak-hash-or-random`'s header as the case that justifies the rule's low precision:
+  `packages/client/src/client/authExtensions.ts:50` derives the **`jti` claim of a private-key-JWT
+  client assertion** (RFC 7523) from `Math.random()`. `jti` is the replay-protection identifier, and
+  `Math.random()` is not a CSPRNG — its state is recoverable from a few outputs. The function verifies
+  `globalThis.crypto` exists ~10 lines earlier and throws if absent, so `crypto.randomUUID()` was
+  already guaranteed available; the weak call buys no portability. Across both corpora this rule has
+  17 findings and 1 genuine defect — the ratio holds, but "mostly wrong about the risk" must not be
+  read as "safe to skim," because the hit that mattered was in an auth path.
+- **A second false-positive class for `py-failopen-on-exception`**, from the `servers` repo's Python git
+  server: `except git.InvalidGitRepositoryError: pass` inside a loop that is *filtering* candidate paths.
+  Same syntax as the defect, opposite meaning; the distinguishing feature is that the handler discards a
+  loop iteration rather than a security decision, which no pattern can see. Deliberately **not**
+  excluded — an exclusion keyed on that shape would suppress real fail-opens in retry and per-item
+  authorization loops. Documented with a triage heuristic instead: if the `try` body appends to a
+  collection on success it is probably a filter; if it guards something it is probably a fail-open.
+- **`SKILL.md` gains the three-question drill for a zero** (does the rule fire on its own fixture, does
+  the construct appear in the corpus, and if both — why is the count zero?), plus the MCP-specific
+  guidance above. Skipping the third question is this skill's own dimension 1 turned on its tooling.
+- **Corrected a false explanation in `ts-tls-verification-disabled`'s header.** It claimed JS corpora
+  hold no server-side configuration, and used that to excuse the zeros in `ts-wildcard-cors` and
+  `ts-binds-all-interfaces`. Both fired on this corpus (13 and 8). The reasoning was true of browser
+  extensions and false of MCP servers; it is corrected in place rather than deleted, since it was the
+  argument used to wave two zeros through.
 
 ## [1.2.0] — 2026-08-07
 
