@@ -156,11 +156,20 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   Sort hits into deliberate-and-reasoned (a comment explains why web clients need the origin),
   deliberate-and-self-flagged (`// use "*" with caution in production`), and unremarked-on-a-tool-
   endpoint. Only the third is usually worth raising, and reporting all three as one number is noise.
-  **A rule can be right about the construct and still find the one thing that matters.** The same run
-  produced 3 `ts-weak-hash-or-random` hits; two were cache-key uniquifiers, and one was `Math.random()`
-  minting the **`jti` replay-protection claim** of a private-key-JWT client assertion in the official
-  MCP TypeScript SDK — in a function that had already verified `globalThis.crypto` was available. A
-  low-precision rule still needs every hit read, because the hit that matters sits in an auth path.
+  **Ask which *property* the consumer needs, not whether the value sounds security-relevant.** The same
+  run produced 3 `ts-weak-hash-or-random` hits. Two were cache-key uniquifiers. The third was
+  `Math.random()` minting the **`jti` claim** of a private-key-JWT client assertion in the official MCP
+  TypeScript SDK — an auth file, a claim named after replay protection, a citable RFC, and `crypto`
+  already confirmed available ten lines earlier. It was written up as a High, and that was **wrong**.
+  RFC 7519 §4.1.7 asks `jti` only for a negligible probability of *accidental* collision, RFC 7523 §6
+  says the spec "does not mandate replay protection," and every replay path — verbatim replay, forging a
+  new assertion, pre-burning a predicted value — is stopped by the assertion's **signature**, not by
+  `jti` being unguessable. Measured 0 collisions in 2,000,000 values, so the code meets the property that
+  is actually required. So: for any weak-RNG hit, name the property the consumer depends on. Uniqueness
+  (`jti`, ETags, idempotency keys, correlation ids, cache busters) is not a defect; unpredictability
+  (session tokens, API keys, reset links, CSRF tokens, nonces) is. **Read the spec instead of inferring
+  from the field's name** — a value whose name sounds like a security control is the easiest way to talk
+  yourself into a finding that is not there. Write the answer down before you report the hit.
   **Scope N/A honestly by surface.** `ts-token-in-localstorage` found nothing across all 1074 files
   because a Node MCP server has no DOM and calls no web-storage API at all. On a submission with no
   browser surface that rule is **N/A, not passed** — "no credential-storage issues found" after
@@ -384,9 +393,11 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
    `Math.random()` is guessable regardless of how well it is stored — the RNG is not a CSPRNG and its
    state is recoverable from a few outputs. `bandit` covers the Python equivalents (B311 `random`,
    B324 `md5`/`sha1`) when installed; `semgrep-rules/ts-weak-hash-or-random` covers TS. Expect this one
-   to be **mostly right about the construct and mostly wrong about the risk** — measured 13 of 14 real
-   hits were legitimate non-security uses (cache-busting, event-name suffixes, filenames). The
-   question is whether an attacker gains anything by predicting the value or finding a collision.
+   to be **mostly right about the construct and mostly wrong about the risk** — measured across two real
+   corpora: **17 findings, 0 confirmed defects**, all legitimate non-security uses (cache-busting,
+   event-name suffixes, filenames, ids that need only uniqueness). Ask **which property** the consumer
+   requires — uniqueness or unpredictability — and read the spec rather than inferring it from the
+   value's name; only unpredictability makes a hit a defect.
 
 9. **Malicious / offensive behavior (self-check — is the artifact itself safe?).** Confirm the
    tool is defensive, not weaponized: it does not exploit/move-laterally/exfiltrate, does not

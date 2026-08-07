@@ -28,25 +28,62 @@
 # `confidence: LOW` and why the message leads with the triage question rather than with a verdict:
 # expect this rule to be mostly right about the construct and mostly wrong about the risk.
 #
-# SECOND MEASUREMENT, on MCP servers rather than browser libraries, and it revises that expectation
-# upward: 3 findings across 1074 TypeScript files from six real MCP servers (13 further files failed to
-# parse and were not analysed). All 3 are `Math.random()`-derived identifiers, and one is a real defect
-# of exactly the kind this rule exists for:
+# SECOND MEASUREMENT, on MCP servers rather than browser libraries: 3 findings across 1074 TypeScript
+# files from six real MCP servers (13 further files failed to parse and were not analysed). All 3 are
+# `Math.random()`-derived identifiers, and all 3 are FALSE POSITIVES. Across both corpora: 17 findings,
+# 0 confirmed security defects.
 #
-#   * `typescript-sdk/packages/client/src/client/authExtensions.ts:50` --
-#     `const jti = ${Date.now()}-${Math.random().toString(36).slice(2)}` for the **`jti` claim of a
-#     private-key-JWT client assertion** (RFC 7523). `jti` is the replay-protection identifier: an
-#     authorization server rejects a repeat. Deriving it from `Math.random()` makes it predictable, and
-#     `Math.random()` state is recoverable from a few outputs. The function verifies `globalThis.crypto`
-#     is present ~10 lines earlier and throws if not, so `crypto.randomUUID()` was already guaranteed
-#     available -- the weak call is not a portability compromise. This is the High-severity end of this
-#     rule's range, in the current official SDK.
-#   * the other two are an in-memory event-store ID and a client-identity cache key -- non-security
-#     uniquifiers, i.e. the documented majority FP shape.
+# THE NEAR-MISS IS THE MOST INSTRUCTIVE HIT THIS RULE HAS PRODUCED, so it is recorded in full. It is the
+# canonical trap for whoever triages this rule next, because it is the one FP that looks exactly like a
+# finding: an auth file, a named security claim, a citable RFC.
 #
-# So across both corpora: 17 findings, 1 genuine security defect. The construct-vs-risk ratio holds,
-# but "mostly wrong about the risk" must not be read as "safe to skim" -- the one hit that mattered was
-# in an auth path, which is where this rule earns its place.
+#   `typescript-sdk/packages/client/src/client/authExtensions.ts:50`
+#       const jti = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+#
+#   ...feeding the `jti` claim of a private-key-JWT client assertion (RFC 7523). Every surface signal
+#   says High: `Math.random()` is not a CSPRNG, `jti` is *the* claim an authorization server uses to
+#   reject replays, and the function has already verified `globalThis.crypto` is present ~10 lines
+#   earlier -- so `crypto.randomUUID()` was available and the weak call buys no portability. This was
+#   initially written up here as a real defect. IT IS NOT ONE. Checking the specs instead of reasoning
+#   from the claim's name is what overturned it:
+#
+#     * RFC 7519 4.1.7 requires `jti` be assigned with "a negligible probability that the same value
+#       will be ACCIDENTALLY assigned to a different data object" -- collision resistance, not
+#       unpredictability.
+#     * RFC 7523 3(7) says the AS "MAY ensure that JWTs are not replayed by maintaining the set of used
+#       `jti` values"; 6 adds the spec "does not mandate replay protection."
+#     * RFC 8725 (JWT Best Current Practices) does not mention `jti` at all. Its entropy requirements
+#       are about KEYS and ECDSA nonces, not identifiers.
+#
+#   And the attack path does not close. Replay defense is "the AS remembers used `jti`s and rejects
+#   repeats." Replaying the captured assertion verbatim reuses the same `jti` and is rejected regardless
+#   of how it was generated. Forging a NEW assertion with a predicted `jti` -- or pre-burning one to lock
+#   the real client out -- requires signing with the client's private key. THE SIGNATURE is the control
+#   on all three paths; `jti` is bookkeeping. Predictability buys an attacker nothing.
+#
+#   Measured on the property that IS required: 0 collisions in 2,000,000 generated values (~52 bits of
+#   mantissa, 10-12 base36 chars in 97% of samples, partitioned further by the `Date.now()` ms prefix).
+#   The code satisfies the spec's actual requirement.
+#
+#   Correct verdict: `crypto.randomUUID()` would be better -- consistent with the same repo's session-id
+#   and client_id generation, and immune to a refactor that moves the value somewhere unpredictability
+#   DOES matter -- but this is a code-quality nit, not a vulnerability. A drive-by PR, not a security
+#   report.
+#
+#   TRIAGE RULE this produced: for a `Math.random()` hit, do not stop at "is this value security-
+#   relevant?" Ask WHICH PROPERTY the consumer requires -- uniqueness, or unpredictability -- and read
+#   the spec rather than inferring it from the field's name. `jti`, ETags, idempotency keys, correlation
+#   ids and cache busters need uniqueness. Session tokens, API keys, password-reset links, CSRF tokens
+#   and nonces need unpredictability. Only the second class is a defect here. A claim that SOUNDS like a
+#   security control is the easiest way to talk yourself into a finding that is not there.
+#
+#   The other two hits are an in-memory event-store ID and a client-identity cache key -- the documented
+#   majority FP shape, and both uniqueness-only consumers by the same test.
+#
+# So "mostly right about the construct and mostly wrong about the risk" is confirmed, not softened: this
+# rule has now produced 17 findings and 0 defects. Keep it -- it is cheap and the construct genuinely
+# precedes real defects -- but never report one of its hits without answering the which-property question
+# in writing.
 #
 # KNOWN FALSE POSITIVES (measured; these are the MAJORITY of hits on real code, so triage by reading):
 #   * `md5`/`sha1` as a non-security digest: cache keys, ETags, dedupe fingerprints, content-addressed

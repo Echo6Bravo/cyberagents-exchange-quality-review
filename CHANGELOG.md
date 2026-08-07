@@ -32,22 +32,36 @@ All notable changes to this skill are documented here. The format follows
   |---|---|---|
   | `ts-wildcard-cors` | **13** (8 production) | highest-firing; all genuine. Near house style on MCP servers, since browser clients need cross-origin access to OAuth metadata and token endpoints. Three intents now documented — reasoned, self-flagged, and unremarked — because only the third is usually worth raising |
   | `ts-binds-all-interfaces` | **8** (0 production) | all in `.examples.`/guide files, 6 pairing the broad bind with an `allowedHosts` allowlist. Found only after the fix above |
-  | `ts-weak-hash-or-random` | **3** (2 production) | one is a genuine defect — see below |
+  | `ts-weak-hash-or-random` | **3** (2 production) | all three false positives — see the near-miss below |
   | `ts-unsafe-deserialization` | 0 | corpus has no `eval` / `new Function` / unsafe deserializer, and vendors nothing |
   | `ts-untrusted-data-in-llm-system-prompt` | 0 | **34 files do contain a system-prompt channel** — an 8.5x better denominator than the previous measurement's 4, with no misfires |
   | `ts-token-in-localstorage` | 0 | **vacuous**: 0 occurrences of `localStorage`/`sessionStorage`, since a Node server has no DOM. Now documented as **N/A rather than passed** on submissions with no browser surface |
   | `ts-tls-verification-disabled` | 0 | **vacuous**: 0 occurrences of `rejectUnauthorized` in any form, twice over now |
 
   Every one of the 25 findings was triaged by reading the source; none is reported on a count alone.
-- **A real security defect found in the official MCP TypeScript SDK**, recorded in
-  `ts-weak-hash-or-random`'s header as the case that justifies the rule's low precision:
-  `packages/client/src/client/authExtensions.ts:50` derives the **`jti` claim of a private-key-JWT
-  client assertion** (RFC 7523) from `Math.random()`. `jti` is the replay-protection identifier, and
-  `Math.random()` is not a CSPRNG — its state is recoverable from a few outputs. The function verifies
-  `globalThis.crypto` exists ~10 lines earlier and throws if absent, so `crypto.randomUUID()` was
-  already guaranteed available; the weak call buys no portability. Across both corpora this rule has
-  17 findings and 1 genuine defect — the ratio holds, but "mostly wrong about the risk" must not be
-  read as "safe to skim," because the hit that mattered was in an auth path.
+- **A documented near-miss in `ts-weak-hash-or-random`'s header — the most instructive hit this rule has
+  produced, and it is a false positive.** `typescript-sdk/packages/client/src/client/authExtensions.ts:50`
+  derives the `jti` claim of a private-key-JWT client assertion (RFC 7523) from `Math.random()`. Every
+  surface signal says High: an auth file, a named security claim, a citable RFC, `Math.random()` where a
+  CSPRNG was already proven available. **It was initially written up here as a real defect. That was
+  wrong**, and checking the specs rather than reasoning from the claim's name is what overturned it:
+  RFC 7519 §4.1.7 requires only that `jti` have a negligible probability of being *accidentally*
+  duplicated — collision resistance, not unpredictability; RFC 7523 §3(7) makes AS-side replay tracking
+  a MAY and §6 says the spec does not mandate replay protection; RFC 8725 does not mention `jti` at all
+  (its entropy requirements cover keys and ECDSA nonces). The attack path also does not close: replaying
+  the captured assertion verbatim reuses the same `jti` and is rejected anyway, while forging a new one
+  — or pre-burning a predicted value to lock the real client out — requires the client's private key.
+  **The signature is the control on every path; `jti` is bookkeeping.** Measured on the property that is
+  actually required: 0 collisions in 2,000,000 generated values. Correct verdict:
+  `crypto.randomUUID()` would be better and more consistent with the same repo's session-id generation,
+  but this is a code-quality nit, not a vulnerability.
+  Revised tally: across both corpora this rule has **17 findings and 0 confirmed defects**, which
+  *confirms* rather than softens its documented "mostly right about the construct, mostly wrong about the
+  risk." The header now carries the triage rule the episode produced: for a `Math.random()` hit, ask
+  **which property the consumer requires** — uniqueness (`jti`, ETags, idempotency keys, cache busters)
+  or unpredictability (session tokens, API keys, reset links, CSRF tokens, nonces) — and read the spec
+  instead of inferring it from the field's name. Only the second class is a defect. A value whose name
+  *sounds* like a security control is the easiest way to talk yourself into a finding that is not there.
 - **A second false-positive class for `py-failopen-on-exception`**, from the `servers` repo's Python git
   server: `except git.InvalidGitRepositoryError: pass` inside a loop that is *filtering* candidate paths.
   Same syntax as the defect, opposite meaning; the distinguishing feature is that the handler discards a

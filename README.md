@@ -134,9 +134,13 @@ tells the assistant to repeat them rather than report a bare zero:
   and are excluded from that denominator). 25 findings, every one triaged by reading the source.
   `ts-wildcard-cors` was the highest-firing at 13 (8 in production paths) and every hit was genuine —
   wildcard CORS is near house style on MCP servers, so the rule's job there is classifying *intent*.
-  `ts-weak-hash-or-random` surfaced a real defect in the official SDK: `Math.random()` generating the
-  **`jti` replay-protection claim** of a private-key-JWT client assertion, in a function that had
-  already confirmed `globalThis.crypto` was available.
+- **The most instructive hit was a false positive, and it is documented as one.** `ts-weak-hash-or-random`
+  flagged `Math.random()` feeding the `jti` claim of a private-key-JWT client assertion in the official
+  SDK. It looks like a High: auth file, named claim, citable RFC. It is not a defect — RFC 7519 §4.1.7
+  asks `jti` for *collision resistance*, not unpredictability, and every replay path is gated by the
+  assertion's **signature**, not by guessing `jti`. Measured 0 collisions in 2,000,000 values. The rule
+  header now carries the triage rule this produced: ask **which property** the consumer needs — uniqueness
+  or unpredictability — and read the spec rather than inferring it from the field's name.
 - **That run also found a defect in one of these rules, which is the point of measuring.**
   `ts-binds-all-interfaces` reported zero against a corpus holding 102 `.listen(` calls, because modern
   MCP servers bind via a framework factory rather than `.listen()`. It was missing 8 real sites. A zero
