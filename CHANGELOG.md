@@ -119,6 +119,55 @@ All notable changes to this skill are documented here. The format follows
   is a security shape, not a formatting one, so a conflict gets a narrow `# noqa: <code>` with its
   reason rather than a widened exclude. Verified with a negative control (percent-format restored →
   "Found 3 errors", exit 1). `ruff`'s `S` rules stay off, as everywhere: `bandit` owns that lane.
+- **Two rules and three prose sections closing the OWASP 2025 gaps found by an earlier audit**
+  (`A01` SSRF, `A09` logging/alerting, `A10` mishandling of exceptional conditions). The audit had
+  mapped all ten 2025 categories against the 19 dimensions; these were the three that came back as
+  real gaps rather than already-covered-under-another-name. Rule count 10 → 12, test suite 123 → 132.
+  - **`semgrep-rules/py-ssrf-url-from-scanned-data`** (dim 2/17, `CWE-918`) — outbound request to a
+    non-literal URL with no host allowlist in the same function. This matters for this artifact class
+    specifically: these tools read attacker-influenceable cloud metadata and then fetch what it names,
+    so an `evidence_url` from a finding points wherever the environment says — including
+    `169.254.169.254`, which returns the tool's own credentials. Catches all four planted defects
+    (dict-derived URL, f-string host, `urlopen`, `httpx`) and clears all seven correct forms.
+    **0 findings on 65 real Python files.** All 8 exclusions were ablation-measured to be
+    load-bearing — two started out **inert**, and rather than ship patterns that look protective and
+    do nothing, the fixture gained the two real safe shapes (`httpx` constant, `requests.request`
+    generic verb) that make them fire. This is the third time an exclusion has been measured rather
+    than assumed here, and the second time the measurement changed what shipped.
+  - **`semgrep-rules/py-failopen-on-exception`** (dim 3, `CWE-636`, OWASP A10) — an exception handler
+    that returns a **permissive** value: `True` reading as "compliant", `[]` reading as "no findings",
+    or a bare `pass`. Dimension 3 asked whether the tool fails *cleanly* and never asked whether it
+    fails *closed* — so a scanner that reports a clean bill of health for an environment it never
+    examined passed the dimension. Catches all three shapes, clears both correct forms.
+    The leading `...` inside each handler pattern is **load-bearing and measured**: without it the
+    `log.warning(); return []` case is missed (control finds 3 defects, ablated finds 2) — and that
+    is the commonest real spelling, because the log line is what convinces the author they handled it.
+    **1 finding on 65 real Python files**, the predicted `except ImportError: pass`
+    optional-dependency probe, now excluded. That exclusion is deliberately **broader than the FP**:
+    it also suppresses a security module silently failing to import, which is a genuine fail-open. A
+    narrower `try: import $M ... except ImportError: pass` form was written and **measured to be
+    equivalent** (it suppressed the security-import probe identically, since the import is the first
+    statement either way), so it was discarded rather than shipped as a distinction that does not
+    exist. The blind spot is named in the rule header instead.
+  - **Overlap is measured, not asserted**, because both rules sit next to tools that look like they
+    already cover them. `bandit` B310 fires on the SSRF fixture's `urlopen` lines — *and on the
+    correct constant-URL line*, because it audits the URL **scheme**, not the URL's provenance; it
+    does not cover `requests` or `httpx` at all. `bandit` B110 sees 1 of the 3 fail-open shapes
+    (`try/except/pass`); `ruff` BLE001/S110 flag the *style* of a blind except. None of them
+    distinguish a fail-open in a security decision from a benign one. Both findings are recorded in
+    the rule headers so a future reader does not delete either rule as duplicative.
+  - **Dimension 2 gains a URL sink**, structured like the path sink before it: the allowlist must be
+    on the parsed **hostname**, and the question the allowlist does not answer is redirects — an
+    allowlisted host can 302 to a blocked one and `requests` follows redirects by default.
+  - **Dimension 3 gains the fail-closed half and the A09 reconstruction/surfacing questions.** The
+    A09 half is prose-only and stays that way: "sufficient logging" has no construct signature. The
+    two questions worth asking are whether the output alone reveals what was **skipped** and why (a
+    run that examined 3 of 40 accounts must not be reportable as "3 findings" — state the
+    denominator), and whether anything makes a degraded run *visible* to someone who will never read
+    stderr. Scheduled tools are the sharp case: nobody reads the logs of a job that exits 0.
+  - **Dimension 10 gains the consequence for egress enumeration**: a destination is only enumerable
+    if it is a constant. Where the target is computed from scanned data the egress set is unbounded,
+    so the finding is the missing allowlist, not a documentation gap.
 
 ### Changed
 - The shipped-helper directives and the CI comment no longer hardcode how many scripts ship

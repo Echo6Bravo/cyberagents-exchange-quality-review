@@ -109,9 +109,13 @@ never a silent skip and never a reason to overstate what was checked.
 Run whatever of these the language/stack supports; treat findings as input to the relevant
 dimension, not a substitute for it. Install only with the user's approval (`bash setup.sh`).
 - **Secrets:** `gitleaks git --no-banner --redact .` over **full history** (fetch-depth 0 in CI).
-- **Python lint/SAST:** `ruff check .` and `bandit -r .`. Leave ruff's `S` (flake8-bandit) rules
-  **off** — they are a port of bandit's checks (`S501` ≡ `B501`), so enabling them here would
-  report every Python security finding twice and inflate the count. `bandit` owns that lane.
+- **Python lint/SAST:** `ruff check .` and `bandit -r .`. Don't **select** ruff's `S`
+  (flake8-bandit) rules — they are a port of bandit's checks (`S501` ≡ `B501`), so enabling the set
+  would report every Python security finding twice and inflate the count. `bandit` owns that lane.
+  **But do not claim the `S` rules are off, because a few are on by default:** measured on ruff
+  0.16.1, the default set already includes `S102`/`S110`/`S112`, so `try/except/pass` is reported by
+  both tools with no `select` at all. When you dedupe a finding count across these two tools, dedupe
+  on the *shape*, not on the assumption that their rule sets are disjoint.
   B101 (assert) is commonly skipped
   because asserts in *tests* are intentional — scope the skip to tests rather than suppressing
   it repo-wide. In library/runtime code an `assert` is **not** a guard: `python -O` strips it,
@@ -128,8 +132,8 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   two flags are not optional — without them a blocked version check adds ~90s per invocation.
   If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
   as a tool that ran.
-  **Bound the claim to the rules that exist.** The set covers dimensions 2, 6, 8, 11, 13, and 17 —
-  not "JS/TS security." Ten rules, each with a documented blind-spot list in its own header; read the
+  **Bound the claim to the rules that exist.** The set covers dimensions 2, 3, 6, 8, 11, 13, and 17 —
+  not "JS/TS security." Twelve rules, each with a documented blind-spot list in its own header; read the
   header of any rule you cite before quoting it, because several deliberately trade recall for a hit
   list a human will read (`ts-weak-hash-or-random` ignores bare `Math.random()`; `ts-binds-all-interfaces`
   cannot see `listen(port)` with no host at all, which is the *commonest* real exposure).
@@ -218,6 +222,22 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      deduce it from upstream validation, because that deduction breaks silently the first time
      someone adds a path component nobody re-validated. `bandit` does not raise this shape at any
      severity, so "the scanners are clean" is not evidence here.
+   - *A URL is a sink, and it is the one this artifact class gets wrong.* A value that becomes part
+     of an **outbound request target** — a URL, a hostname, a webhook, a callback, a redirect
+     target — is a sink (`CWE-918`, SSRF). It matters here more than in most software because the
+     job of these tools is to read attacker-influenceable cloud metadata and then go fetch things:
+     a resource tag, a description, or an `evidence_url` round-trips through the provider API and
+     comes back as something the tool will dutifully GET. Pointed at the instance-metadata endpoint
+     (`169.254.169.254`) it returns the tool's own credentials; pointed at `127.0.0.1` it reaches
+     admin ports that have no authentication because they only ever expected localhost. Parse the
+     URL and assert the **hostname** against an allowlist immediately before the request — a scheme
+     check, a `startswith`, or a substring test is not an allowlist. Then ask the question the
+     allowlist does not answer: **an allowlisted host can redirect to a blocked one**, and
+     `requests` follows redirects by default, so `allow_redirects=False` (or a re-check on the final
+     URL) is the missing half. `semgrep-rules/py-ssrf-url-from-scanned-data` is the backstop.
+     `bandit` B310 is **not** coverage for this: it audits the *scheme* on `urlopen`, fires on
+     correct constant-URL code too, and does not cover `requests` or `httpx` at all — so "bandit is
+     clean" says nothing about where a URL came from.
    - *Ask which FIELDS the payloads reached, not just which payloads exist.* The failure mode worth
      hunting is a thorough payload set applied to one field. Run
      `scripts/field-coverage-scan.sh <target>` (dimension 2's payload-coverage probe) to diff
@@ -246,6 +266,35 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      throws `IndexError`/`FileNotFoundError`/`ValueError` on bad input still fails the
      dimension. **Probe each entry point, not just the happy-path one covered by tests** —
      the invocation the test suite never calls is exactly where the raw traceback hides.
+   - *Failing cleanly is only half the dimension — the other half is failing CLOSED.* Everything
+     above asks whether an error surfaces well. Ask the opposite too: when the handler runs, does it
+     hand the caller a **permissive** value? A scanner that returns `True` for "compliant", or `[]`
+     for "findings", when its input failed to parse has reported a clean bill of health for an
+     environment it never examined — and the caller cannot distinguish that from a real pass. This is
+     **more dangerous than the crash**, because a crash gets noticed; this ships a green dashboard
+     indefinitely. The tell is a log line followed by a permissive return: the `log.warning()` is
+     what convinces the author they handled it. Prefer failing closed (`raise`, or return `False`),
+     and better still return a **third state the caller must handle** (`UNAVAILABLE`, or `None` with
+     a `checked` flag) so "did not run" can never render as "passed" — note that plain fail-closed
+     still conflates "not compliant" with "could not check", which is its own reporting defect.
+     `semgrep-rules/py-failopen-on-exception` is the backstop for the Python shapes. It is additive,
+     not duplicative: `bandit` B110 sees only `try/except/pass` (one of the three shapes), and
+     `ruff` BLE001/S110 flag the *style* of a blind except — none of them distinguish a fail-open in
+     a security decision from a benign one, which is the entire question. It also cannot: a
+     `return []` that legitimately means "no cached rows" is a finding to triage, not a defect, and
+     permissive `{}`/`0`/`None` returns are outside the rule's reach.
+   - *Would a silent partial failure look identical to a clean result?* (OWASP A09, and the rename
+     from "logging failures" is the useful part.) Two questions, in order. **Reconstruction:** from
+     the tool's own output and logs alone, can you tell what it actually scanned — which accounts,
+     regions, resource types, and crucially which ones it *skipped* and why? A run that examined 3
+     of 40 accounts because 37 credentials expired must not be reportable as "3 findings". State the
+     denominator, not just the numerator. **Surfacing:** does anything make a degraded run *visible*
+     — a nonzero exit code, a `[DEGRADED]` marker in the output, a summary line naming the skipped
+     units — or does it require someone to read stderr they will never read? Scheduled tools are the
+     sharp case: nobody reads the logs of a job that exits 0. This is prose-only and stays that way;
+     "sufficient logging" has no construct signature, so no rule can answer it. Where the tool
+     tolerates partial failure by design (dimension 5), this is the check that the tolerance is
+     *reported* rather than merely survived.
 
 4. **Scale.** Estimate volume at 10–50x the test environment (pull size, memory, output size,
    algorithmic complexity). Confirm caps/streaming/chunking exist and that nothing is silently
@@ -325,6 +374,12 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     contacts (APIs, telemetry, package/CDN fetches, webhooks) and confirm EACH is documented in
     the README. Grep for `curl|wget|requests|http|fetch|socket|urllib` and cross-check against
     the docs. Hidden egress (esp. sending scan data anywhere undisclosed) is a rejection class.
+    **A destination is only enumerable if it is a constant.** Where the request target is *computed*
+    from scanned data, the honest answer to "which hosts does this contact?" is "unbounded" — the
+    destination list is whatever the environment says it is. That is dimension 2's SSRF sub-bullet
+    and `semgrep-rules/py-ssrf-url-from-scanned-data`; here it means the README cannot document the
+    egress set at all until an allowlist bounds it. Report the missing allowlist as the egress
+    finding, not as a documentation gap.
 
 11. **Tests & CI.** Is each of the above locked in so it can't regress? A finding fixed without
     a regression test is only half-fixed. Confirm: (a) a runnable test suite covers the fixed
