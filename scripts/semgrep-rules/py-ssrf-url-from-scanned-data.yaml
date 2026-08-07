@@ -1,0 +1,96 @@
+# Dimension 2 (input safety) / dimension 17 (outbound authority), SSRF sink. CWE-918.
+# Maps to OWASP 2025 A01 Broken Access Control, which absorbed SSRF.
+#
+# Why this exists: dimension 2's sink list named HTML/SVG/CSV/shell/SQL and (since
+# `py-path-write-without-containment`) the filesystem. An *outbound HTTP request* was not on it, and
+# the word "SSRF" appeared nowhere in this skill. A reviewer following dimension 2 exactly would
+# never ask whether a URL came from scanned data -- which for this artifact class is the likeliest
+# spelling of the bug, because the whole job of these tools is to read attacker-influenced cloud
+# metadata and then go fetch things.
+#
+# WHAT THIS RULE DOES NOT PROVE -- read before trusting a zero. It checks that a host allowlist is
+# *lexically present* in the same function as the request. It does NOT prove the allowlist is
+# correct, complete, or applied to the URL actually requested, and it is NOT taint analysis: a URL
+# that arrives through a helper is invisible to it. It also cannot see a redirect: an allowlisted
+# host that 302s to 169.254.169.254 defeats every pattern here, and `allow_redirects` defaults to
+# True in `requests`. Dimension 2's and dimension 17's prose stay the primary proof.
+#
+# OVERLAP, measured -- do not delete this rule as duplicative. `bandit` raises B310 on the
+# `urlopen` lines, but B310 is a *scheme* audit ("permitted schemes ... file:/ or custom") and it
+# fires on the SAFE constant-URL line too (measured: lines 17 and 40 of the fixture, one vulnerable
+# and one correct). It says nothing about where the URL came from, and it does not cover `requests`
+# or `httpx` at all -- the two libraries this artifact class actually uses. `ruff` at `--select ALL`
+# raises nothing in this class (46 findings on the fixture, all style/annotation/docstring). So the
+# specific question "is this URL derived from data we scanned?" is unasked by both tools.
+#
+# WHY NOT `mode: taint`: same measured reason as `py-path-write-without-containment` -- default taint
+# mode is intraprocedural, so it does not cross the helper boundary that real code always has, and
+# interprocedural analysis needs Semgrep Pro (login-gated binary download, unavailable behind a
+# TLS-intercepting proxy). Do not "improve" this rule into taint mode without re-measuring.
+#
+# FALSE POSITIVES: 0 findings on 65 real Python files (46 scanned; the rest are not Python targets),
+# across two local repos. That is a genuine zero, not an untested claim -- but note it is a zero on
+# code that happens not to make data-derived requests, which is weaker evidence than a zero on code
+# that makes many. Every one of the 8 exclusions below was ablation-tested and is LOAD-BEARING:
+# removing any single one reintroduces a false positive on a correct form in the fixture. An earlier
+# draft had an inert `httpx` exclusion and an inert generic-verb exclusion; rather than ship patterns
+# that look protective and do nothing, the fixture gained the two real safe shapes that make them
+# fire. Re-run the ablation after editing either file.
+rules:
+  - id: py-ssrf-url-from-scanned-data
+    languages: [python]
+    severity: ERROR
+    message: >-
+      dim2/dim17: outbound HTTP request to a non-literal URL with no host allowlist in the same
+      function. If any part of this URL comes from scanned data, an API response, or tool input, it
+      can be pointed at the cloud instance-metadata endpoint (169.254.169.254), at localhost
+      admin ports, or at an internal service -- and the response may come back to the caller.
+      Parse the URL and assert the hostname against an allowlist immediately before the request;
+      a scheme check or a substring test is not an allowlist. Consider allow_redirects=False, since
+      an allowlisted host can redirect to a blocked one. This rule proves only that an allowlist is
+      lexically present, never that it is correct.
+    metadata:
+      qr-dimension: 2
+      owasp: "A01:2025 Broken Access Control (SSRF)"
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: requests.get($U, ...)
+          - pattern: requests.post($U, ...)
+          - pattern: requests.put($U, ...)
+          - pattern: requests.delete($U, ...)
+          - pattern: requests.head($U, ...)
+          - pattern: requests.patch($U, ...)
+          - pattern: requests.request($M, $U, ...)
+          - pattern: urllib.request.urlopen($U, ...)
+          - pattern: httpx.get($U, ...)
+          - pattern: httpx.post($U, ...)
+      # A hardcoded URL carries no SSRF risk from input data. These are interpolation-sensitive in
+      # exactly the way you want, and it was measured rather than assumed: an f-string with a
+      # substituted host still FIRES (the `"..."` metavariable does not match an interpolating
+      # f-string), while a fully static f-string is excluded like a plain literal. Each of these four
+      # was ablation-tested as load-bearing -- dropping them reintroduces findings on the four
+      # constant-URL functions in the fixture.
+      - pattern-not: requests.$M("...", ...)
+      - pattern-not: requests.request($MM, "...", ...)
+      - pattern-not: urllib.request.urlopen("...", ...)
+      - pattern-not: httpx.$M("...", ...)
+      # The three allowlist spellings that DO constitute a host check. All three are load-bearing:
+      # with only the first, the positive form and the assert form were FALSE POSITIVES ON CORRECT
+      # CODE. This mirrors the four-spelling lesson from py-path-write-without-containment -- a rule
+      # that recognizes one spelling of a guard punishes everyone who writes it another way.
+      #
+      # `assert` is the weakest spelling: `python -O` strips it, so the check does not run in an
+      # optimized build. The rule accepts it because it is lexically a guard; dimension 11's prose is
+      # where that gets challenged.
+      - pattern-not-inside: |
+          if $H not in $ALLOW:
+            ...
+          ...
+      - pattern-not-inside: |
+          if $H in $ALLOW:
+            ...
+      - pattern-not-inside: |
+          assert $H in $ALLOW
+          ...

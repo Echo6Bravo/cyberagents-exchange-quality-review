@@ -1,0 +1,80 @@
+# Dimension 3 (failure behaviour), inverted. CWE-636 / CWE-703.
+# Maps to OWASP 2025 A10 Mishandling of Exceptional Conditions -- the category added in the 2025
+# list, and the most artifact-relevant one for this class of tool.
+#
+# Why this exists: dimension 3 asks whether the tool fails *cleanly* -- no raw traceback, correct
+# exit code, no half-written output. That is one of the two ways error handling goes wrong. This rule
+# covers the other one, which dimension 3 did not ask about at all: swallowing the error and
+# returning a PERMISSIVE value. A scanner that returns `True` for "compliant" or `[]` for "findings"
+# when its input failed to parse reports a clean bill of health for an environment it never examined.
+# That is strictly more dangerous than crashing, because a crash gets noticed.
+#
+# OVERLAP, measured -- do not delete this rule as duplicative. `bandit` B110 catches `try/except/pass`
+# and nothing else: 1 of the 3 defects in the fixture. `ruff` BLE001/S110 flag the *style* of a blind
+# except. Neither one distinguishes a fail-open in a security decision from a benign one, and neither
+# sees `return True` or `return []` in a handler -- which are the two shapes that actually
+# misreport. So this rule is additive on 2 of 3 defects and additive in *meaning* on all 3.
+#
+# WHAT THIS RULE CANNOT DO -- read before trusting a zero. It is purely syntactic. It cannot tell a
+# security decision from a cache lookup, so a `return []` that legitimately means "no cached rows"
+# is a finding here and must be triaged as a question, per the house rule for every probe in this
+# directory. It also only sees the literal returns `True` and `[]`; a fail-open that returns `{}`,
+# `0`, `None`-as-permissive, or a permissive object is invisible. Widening it was deliberately NOT
+# done this pass: `return None` and `return {}` are overwhelmingly benign in real code, and a rule
+# whose findings are mostly noise gets disabled, which is worse than a documented blind spot.
+#
+# KNOWN FALSE POSITIVE CLASS, measured: 1 finding on 65 real Python files (46 scanned), and it is the
+# optional-dependency probe -- `try: import botocore ... except ImportError: pass`. That is a genuine
+# true-negative-in-context, so it is excluded below. THE EXCLUSION IS BROADER THAN THE FP: it also
+# suppresses a security module failing to import and being silently skipped, which IS a real
+# fail-open. A narrower form (`try: import $M ... except ImportError: pass`) was written and MEASURED
+# TO BE EQUIVALENT -- it suppressed the security-import probe identically, because the import is the
+# first statement in both -- so the narrower pattern was discarded rather than shipped as a
+# distinction that does not exist. Ask about silently-skipped security imports in prose, not here.
+rules:
+  - id: py-failopen-on-exception
+    languages: [python]
+    severity: ERROR
+    message: >-
+      dim3: exception handler returns a PERMISSIVE value instead of failing closed. If the try block
+      contains a security decision, a parse, or a scan, this reports success for work that did not
+      happen -- `True` reads as "compliant", `[]` reads as "no findings", and a bare `pass` reads as
+      "nothing to report". A caller cannot distinguish that from a clean result. Fail closed
+      (return False / raise), or return a third state the caller must handle explicitly
+      (UNAVAILABLE / None-with-a-check) so "did not run" never renders as "passed".
+    metadata:
+      qr-dimension: 3
+      owasp: "A10:2025 Mishandling of Exceptional Conditions"
+      cwe: "CWE-636: Not Failing Securely ('Failing Open')"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # The leading `...` inside each handler is LOAD-BEARING and was ablation-measured: without
+          # it the `log.warning(); return []` case is MISSED, and that is the most common real
+          # spelling of this bug -- the log line is what convinces the author they handled it.
+          # Measured: control finds lines [6, 13, 21]; dropping the leading `...` finds [6, 21].
+          - pattern: |
+              try:
+                  ...
+              except ...:
+                  ...
+                  return True
+          - pattern: |
+              try:
+                  ...
+              except ...:
+                  ...
+                  return []
+          - pattern: |
+              try:
+                  ...
+              except ...:
+                  pass
+      # Optional-dependency probe. Load-bearing, not decorative: measured, this takes the real-code
+      # finding count from 1 to 0 while leaving all 3 fixture defects firing. See the header for why
+      # the narrower import-specific form was measured and discarded.
+      - pattern-not: |
+          try:
+              ...
+          except ImportError:
+              pass
