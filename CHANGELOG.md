@@ -93,6 +93,15 @@ All notable changes to this skill are documented here. The format follows
     resolved by *deleting* code proven inert (identical output on 276,396 pairs) rather than adding
     a test for it. **The negative is stated as a bound:** `ecosystem: ACTIONS` returns nothing, so
     pinned CI actions are uncovered, and transitive deps count only where a lockfile pins them.
+  - **The self-test is offline because every `gh` path is stubbed — verified with egress blocked.**
+    One assertion had been sending a deliberately invalid ecosystem to the real API on the belief
+    that `gh` would reject it locally. It does not: there is no local GraphQL schema, so that was a
+    live round-trip on every CI run, and it returned `None` for whichever of three reasons applied
+    first (invalid enum, `gh` unauthenticated, network unreachable) — in CI always the second, so it
+    never exercised the path its own comment described. A test that passes for a reason you did not
+    intend is dimension 11's tautology, found by asking why a green assertion was green. Replaced
+    with a stub `gh` that exits non-zero, and the whole suite is now confirmed passing with all
+    egress blackholed rather than merely claimed to be offline.
   - **Measured against live data, which found a false negative the fixtures did not.** Run against
     real manifests, it missed all 12 pins in a `uv pip compile --generate-hashes` file: the trailing
     ` \` before the `--hash` lines defeated the version regex's end anchor. That is the strictest
