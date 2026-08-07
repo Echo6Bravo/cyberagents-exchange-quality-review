@@ -377,6 +377,13 @@ def main(argv):
 
 # ---------------------------------------------------------------------------------------------
 # Offline self-test. Runs with no network and no gh, so it can gate in CI on every push.
+#
+# "Offline" is a hard requirement, not a nicety, and it is achieved one way: every `gh` code path
+# is driven by a STUB on a temporary PATH (or by an empty PATH for the gh-absent branch). Do not
+# add an assertion that calls the real API to make it fail -- an earlier version sent a
+# deliberately invalid ecosystem believing `gh` would reject it locally. It does not: there is no
+# local schema, so that was a live round-trip that passed for whichever of three reasons applied
+# first, and in CI it was never the intended one. Verified with all egress blackholed.
 # ---------------------------------------------------------------------------------------------
 
 def _corpus_audit(rows):
@@ -593,8 +600,25 @@ def self_test():
         finally:
             globals()['query_advisories'] = real_query
     # A failed subprocess must yield None, never [] -- the distinction the exit-2 path rests on.
-    # `gh` is called with a deliberately invalid ecosystem, so this needs no network to fail.
-    ck(query_advisories('NOT_AN_ECOSYSTEM', 'x') is None, 'failed lookup returns None, not []')
+    # Driven with a stub `gh` that exits non-zero, NOT by sending a deliberately invalid ecosystem
+    # to the real API. An earlier version did the latter with a comment claiming it "needs no
+    # network to fail", and that was measured wrong: `gh` carries no local GraphQL schema, so the
+    # bad enum is validated server-side -- a live round-trip on every CI run. Worse, it passed for
+    # three DIFFERENT reasons (invalid enum, `gh` unauthenticated, network unreachable) and in CI
+    # it was always the second, so it never exercised the path its own comment described. A test
+    # that passes for a reason you did not intend is the tautology this skill's dimension 11 is
+    # about, and it was found by asking why a green assertion was green.
+    _path_rc = os.environ.get('PATH', '')
+    with tempfile.TemporaryDirectory() as td_rc:
+        with open(os.path.join(td_rc, 'gh'), 'w', encoding='utf-8') as fh:
+            fh.write('#!/bin/sh\necho "api error" >&2\nexit 1\n')
+        os.chmod(os.path.join(td_rc, 'gh'), 0o755)
+        try:
+            os.environ['PATH'] = td_rc
+            ck(query_advisories('PIP', 'pyyaml') is None,
+               'gh exits non-zero -> None, not [] (the exit-2 path depends on this)')
+        finally:
+            os.environ['PATH'] = _path_rc
     # A GraphQL response carrying BOTH data and errors is the dangerous shape: rc is 0, the JSON
     # parses, and `securityVulnerabilities` may be present but truncated -- so the downstream
     # `node is None` fallback does NOT fire and a partial answer would be reported as complete.
