@@ -121,6 +121,7 @@ rules:
     metadata:
       qr-dimension: 8
       cwe: "CWE-328: Use of Weak Hash / CWE-338: Use of Cryptographically Weak PRNG"
+      owasp: "A04:2025 Cryptographic Failures"
       confidence: LOW
     pattern-either:
       # The two literal spellings, kept explicitly because they are what constant propagation resolves

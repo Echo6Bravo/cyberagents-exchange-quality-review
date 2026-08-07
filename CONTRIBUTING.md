@@ -69,6 +69,19 @@ expected to keep that bar green.
   the noise, *measure* it: an assigned-from-literal exclusion was tried here and rejected because it
   did not scope to the URL variable — any unrelated `const method = "GET";` in the function silently
   suppressed **both** real probe defects. A filter that swallows true positives is worse than noise.
+- **A new rule needs an `owasp:` key, and "none applies" is a valid value that must be written out.**
+  `gate2c` fails the build on a missing key. Say `no applicable category -- <why>` rather than omitting
+  it, matching the idiom the `cwe:` field already uses on the dimension-11 test-hygiene rules: an absent
+  key is indistinguishable from an unmapped one. **Do not answer this by adding a coverage table to
+  `SKILL.md`** — the mapping is deliberately derivable (`grep owasp: scripts/semgrep-rules/*.yaml`)
+  rather than embedded, because a table goes stale the moment a rule is added and still reads as current.
+  Cite categories by **name, not number**; four numbers moved between the 2021 and 2025 lists.
+- **If you cite a rule id in `SKILL.md`, cite it in backticks and keep both language variants current.**
+  `gate2d` catches a citation that resolves to no file, but it cannot catch the likelier drift: a
+  citation that names only `py-*` after a `ts-*` counterpart exists. That happened here — three
+  citations still said `py-` only, so a reviewer working a TypeScript submission would not have learned
+  the TS rule existed. Caught while auditing framework coverage, not by any check, and only because the
+  counterparts were still unreleased. When you add a counterpart, grep the prose for the sibling's id.
 - **Ablate a `paths:` filter with an empty `.semgrepignore` in the corpus root, or the measurement
   lies.** Semgrep's bundled ignore list already drops `tests/`, so a test-excluding `paths:` filter can
   measure as completely inert on a default checkout while doing real work on a full scan. Measured four

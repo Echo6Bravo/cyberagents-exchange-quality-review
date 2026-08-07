@@ -55,6 +55,7 @@ rules:
     metadata:
       qr-dimension: 11
       cwe: "no applicable CWE -- wrong-predicate defect, not a vulnerability class"
+      owasp: "no applicable category -- test-correctness defect, not a vulnerability class"
       confidence: HIGH
     patterns:
       - pattern-either:

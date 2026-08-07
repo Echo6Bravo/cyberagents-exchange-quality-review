@@ -61,6 +61,7 @@ rules:
     metadata:
       qr-dimension: 6
       cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A04:2025 Cryptographic Failures"
       confidence: HIGH
     # Two spellings, because the environment-conditional form needs its own pattern: `...false...`
     # is not valid inside a property value (semgrep reports a config error, measured), and the plain
