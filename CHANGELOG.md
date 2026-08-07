@@ -6,6 +6,29 @@ All notable changes to this skill are documented here. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.2.0] — 2026-08-07
+
+### Added
+- **CI job: release consistency (tags ↔ CHANGELOG).** Added because this repo drifted exactly the way
+  it warns others about: commit `63e4fa0` was titled "Release 1.1.0" and shipped a `## [1.1.0]`
+  CHANGELOG section, but no `v1.1.0` tag was ever created — so for three days the repo asserted a
+  release that did not exist, while 12 commits accumulated past the last real tag. Dimension 12
+  (overstated coverage) and dimension 18 (provenance) both name that shape and nothing was checking
+  for it here. Three bidirectional checks, because the drift can start from either side: a pushed tag
+  must have a CHANGELOG section; a commit claiming `Release X.Y.Z` must have the tag; a CHANGELOG
+  section for a version must have the tag. The last two run on **every** trigger, not just tag
+  pushes, so drift surfaces on the PR that introduces it rather than at release time.
+  Verified against the real defect (all three errors fire on the pre-tag repo) and with a negative
+  control (a `v9.9.9` tag with no CHANGELOG section fails).
+  The workflow now also triggers on `push: tags: ['v*']`.
+- **`CONTRIBUTING.md` documents how to cut a release**, including the ordering constraint the CI
+  check imposes (merge the CHANGELOG rename *before* tagging) and how to pick the bump.
+- **Tags `v1.1.0` and `v1.2.0`.** `v1.1.0` is back-filled onto `63e4fa0`, the commit that documented
+  it — accurate rather than retroactive, since the `## [1.1.0]` section has existed since 2026-08-04.
+
+
 ### Added
 - **`scripts/tautology-scan.sh`** — heuristic grep over *test files* for assertions carrying an
   `or not <precondition>` escape hatch (dimension 11). This is the tautology shape
