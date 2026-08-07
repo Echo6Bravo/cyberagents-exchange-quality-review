@@ -25,9 +25,12 @@ drift; secrets (full git history + credential-at-rest); malicious/offensive self
 undisclosed egress; tests & CI; docs.
 
 **LLM / AI-agent (13–18)** — for tools that call a model or act as an agent/MCP server:
-prompt-injection (indirect); AI data handling (at-rest & vendor egress); LLM output grounding
-& non-determinism; token/cost & runaway-loop controls; access control & agent authority
-(endpoint authN/authZ, MCP auth, tool gating); supply-chain provenance.
+prompt-injection (indirect), plus what the hidden context gives *away* and whether persisted
+agent memory and inter-agent messages are re-validated on read-back; AI data handling (at-rest &
+vendor egress); LLM output grounding & non-determinism; token/cost & runaway-loop controls;
+access control & agent authority (endpoint authN/authZ, MCP auth, tool gating, and whether a
+human approval is a real gate or a rubber stamp); supply-chain provenance, including models and
+datasets — not just packages.
 
 **Generated artifacts (19)** — for tools that *emit* something a human or CI later runs
 (remediation scripts, IaC, SQL, playbooks, config): execution-scope correctness — no single
@@ -186,6 +189,15 @@ moment a rule is added or removed — the overstated-coverage failure mode this 
 Cite categories **by name, not number**: four numbers moved between the 2021 and 2025 lists, so a stale
 "A10 SSRF" reference now misleads. `gate2c` fails the build if any rule omits the key, because the
 derive-it-on-demand trade only holds while the metadata is complete.
+
+Note the `owasp:` keys map to the **web-application** Top 10 — that is a rule-level view, and rules are
+the smaller half of this skill. The **GenAI LLM Top 10** and the draft **Top 10 for Agentic
+Applications** cover dimensions 13–19 and are addressed entirely in prose, because those risks are
+architecture-and-intent questions with no construct signature to match. Hidden context exposure, agent
+memory poisoning, inter-agent trust, and human-approval integrity are review questions, not patterns. So
+an absent `owasp:` value means no *rule* maps to a category — never that the dimension set misses it.
+Two areas are explicitly **out of scope** rather than silently uncovered: retrieval/vector internals
+(unless a listing ships an index) and training-time model poisoning.
 
 ### Probes this skill ships itself
 
