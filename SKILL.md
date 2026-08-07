@@ -82,6 +82,17 @@ Decide per target, and state the decision out loud like any other coverage call:
   you whether a payload suited the field's sink — the case that actually shipped reads as covered.
   It exits 2 rather than 0 when there are no models or no hostile tests to compare, so a clean run
   is never manufactured out of having found nothing.
+- **`scripts/pinned-vuln-scan.py <target>` (dimension 18).** Run it **if** the target ships a
+  `requirements.txt`, `package.json`, or `package-lock.json` *and* `gh auth status` succeeds. It
+  checks every exact pin against the GitHub Advisory DB, because reviewing whether deps are
+  **pinned** says nothing about whether they are **safe** — a pin reproduces whatever it was and
+  never drifts onto a fix. Report a hit as a **defect citing the GHSA id and the advisory's own
+  severity** (the cite-your-basis rule), not as a rejection gate. Two results are not passes:
+  **exit 2** means it could not complete (no manifests, no exact pins, or every lookup failed) and
+  must never be read as clean, and even exit 0 is a **bounded** negative — `ecosystem: ACTIONS`
+  returns nothing, so **pinned CI actions need a manual check**, and transitive deps count only
+  where a lockfile pins them. Range specifiers (`^1.2.3`) are excluded on purpose: they are the
+  not-pinned finding, which the same dimension already covers, so a hit is never counted twice.
 - **`scripts/mutation-check.sh` (dimension 11).** For each regression test backing a fixed finding,
   run it to prove the test FAILS on revert — **only if all preconditions hold:** (a) a runnable
   test command exists; (b) it is fast and **side-effect-free** (no live tenant/API token, no
@@ -447,6 +458,19 @@ frequently the highest-impact dimensions — not optional add-ons.
     pinned to immutable versions/digests, with SRI on CDN `<script>`/`<link>`. No moving tags
     (`@main`), no runtime `docker pull` of unverified images, no imports undeclared in the
     manifest, `npm ci` (not `npm install`) in CI.
+    **"Pinned" is not "safe" — check both, they are opposite failures.** An unpinned dependency
+    is non-reproducible; a *pinned* one is reproducibly whatever it was, including reproducibly
+    vulnerable, and it never drifts to a fix on its own. A clean pinning review says nothing
+    about this, so run `scripts/pinned-vuln-scan.py` (needs `gh` authenticated) to check each
+    exact pin against the GitHub Advisory DB. Report a hit as a **defect with the advisory as
+    its basis** (GHSA id + the advisory's own severity, per the cite-your-basis rule), not as a
+    rejection gate. Two things must survive triage rather than be waved through: the probe
+    exits **2** when it could not complete — no manifests, no exact pins, or every lookup
+    failed — and 2 is *not* a pass, so a zero from a failed lookup must never be read as clean;
+    and its negative is **bounded**, because `ecosystem: ACTIONS` returns nothing (pinned CI
+    actions are uncovered — audit those by hand), transitive deps count only where a lockfile
+    pins them, and range specifiers (`^1.2.3`) are excluded on purpose since they are this
+    dimension's *other* finding above.
 
 ### Generated-artifact dimensions (apply when the tool EMITS something a human or CI then runs)
 Applies to generated remediation scripts, IaC, SQL, playbooks, or config — anything the tool

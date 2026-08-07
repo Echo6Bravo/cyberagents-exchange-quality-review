@@ -168,6 +168,49 @@ rm -rf "$W"
 "$FC" --help >/dev/null 2>&1; chk $? 0 "--help -> rc0"
 "$FC" /nonexistent-path-xyz >/dev/null 2>&1; chk $? 2 "missing path -> rc2"
 
+echo "== pinned-vuln-scan.py =="
+PV="$HERE/pinned-vuln-scan.py"
+# This scanner is Python, so neither the CI `shellcheck scripts/*.sh` glob nor anything else picks
+# it up -- it has to be invoked from here or its ~60 assertions run only when someone remembers to.
+# That is the same silent-coverage failure this repo just committed with ruff, so it is wired in
+# deliberately rather than left to a habit. The self-test is fully offline: no network, and it
+# empties PATH for the branch that needs `gh` absent, so it is safe to gate on every push.
+python3 "$PV" --self-test >/dev/null 2>&1; chk $? 0 "self-test suite passes (offline)"
+# --- Prove the self-test is a real guard, not a tautology (dim 11, and the suite's own rule) ---
+# The suite was mutation-tested to 27/27 during development; two rows are re-run here so a future
+# edit that guts an assertion cannot land green. Each mutates a copy and requires the suite to FAIL.
+W=$(mktemp -d "${TMPDIR:-/tmp}/pvs.XXXXXX")
+cp "$PV" "$W/s.py"; cp "$HERE/test_pinned_vuln_data.json" "$W/" 2>/dev/null
+# (a) `<=` evaluated as `<`. 15% of real advisory ranges use an inclusive upper bound (measured:
+# 111 `<= V` + 57 `>= V, <= V` of 1122), so this bug silently clears vulnerable pins.
+python3 - "$W/s.py" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = "'>=': c >= 0, '<=': c <= 0,"
+assert old in s, "mutation anchor missing -- update this test, do not delete it"
+open(p, 'w').write(s.replace(old, "'>=': c >= 0, '<=': c < 0,", 1))
+PY
+python3 "$W/s.py" --self-test >/dev/null 2>&1; chk $? 1 "self-test catches <= treated as < (inclusive-bound bug)"
+# (b) A failed lookup reported as "nothing known". This is the silent zero the whole probe exists to
+# avoid: `None` (could not ask) collapsing into `[]` (asked, nothing found) turns an outage into a
+# clean bill of health.
+cp "$PV" "$W/s.py"
+python3 - "$W/s.py" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = "    if proc.returncode != 0:\n        return None"
+assert old in s, "mutation anchor missing -- update this test, do not delete it"
+open(p, 'w').write(s.replace(old, "    if proc.returncode != 0:\n        return []", 1))
+PY
+python3 "$W/s.py" --self-test >/dev/null 2>&1; chk $? 1 "self-test catches a failed lookup reported as clean"
+rm -rf "$W"
+# Usage surface, matching the other scanners.
+python3 "$PV" --help >/dev/null 2>&1; chk $? 0 "--help -> rc0"
+# Nothing to check must be rc=2, never rc=0: "no manifests found" is not a pass.
+W=$(mktemp -d "${TMPDIR:-/tmp}/pvs.XXXXXX")
+python3 "$PV" "$W" >/dev/null 2>&1; chk $? 2 "no manifests -> rc2 (not a silent pass)"
+rm -rf "$W"
+
 echo "== setup.sh --check =="
 SETUP="$HERE/../setup.sh"
 # Every tool in TOOLS must appear in the report. Four hand-maintained lists used to have to agree;

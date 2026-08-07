@@ -15,8 +15,11 @@ expected to keep that bar green.
   `# noqa: <code>` naming the reason — never widen an exclude, which blinds the check to the next
   file. `ruff` runs in CI pinned, so a fixture that fails it fails the build.
 - **Test the shipped scripts:** `bash scripts/test_scripts.sh` must be green. A new scanner in
-  `scripts/` needs its scenarios registered there — the CI shellcheck glob and this one entry
-  point pick it up with no workflow change, so there is nothing else to wire.
+  `scripts/` needs its scenarios registered there — that one entry point is what CI runs, so no
+  workflow change is needed. **A new `.py` scanner needs its own invocation added**: the CI
+  `shellcheck -S warning scripts/*.sh` glob covers shell only, so a Python probe with a
+  `--self-test` runs solely because `test_scripts.sh` calls it. Nothing catches a probe that was
+  never wired in — it just reports 0 tests forever, which is this skill's own dimension 12.
 - **Prove your new test is a real guard** (the skill's own dimension 11): break the thing it
   checks and confirm the test *fails*. A test that passes either way asserts nothing. If your
   change documents a limitation — a known false positive, a blind spot — add a test that pins it,

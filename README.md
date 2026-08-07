@@ -149,6 +149,7 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `empty-relationship-scan.sh` | `LOOKUP.get(k) or set()` fallthroughs, where a *missing* relationship silently satisfies a gate | 1 |
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
 | `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
+| `pinned-vuln-scan.py` | Dependencies that are **pinned and vulnerable** — a clean pinning review says nothing about this, since a pin reproduces whatever it was and never drifts to a fix. Checks each exact pin against the GitHub Advisory DB via `gh` | 18 |
 | `semgrep-rules/` | **10 authored rules** for shapes `ruff`/`bandit` cannot reach — seven of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values. Plus two Python test-quality rules and one path-containment rule. | 2, 6, 8, 11, 13, 17 |
 
 Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
@@ -157,7 +158,22 @@ documented false positives, and documented blind spots. `tautology-scan.sh` cove
 `mutation-check.sh` structurally cannot: when the escape hatch is in the *test*, no mutation of the
 code under test changes the result. `field-coverage-scan.sh` exits **2**, not 0, when it finds no
 models or no hostile tests — there is nothing to compare, and reporting that as a pass would be the
-silent zero these probes exist to catch.
+silent zero these probes exist to catch. `pinned-vuln-scan.py` uses the same exit-2 discipline for
+"could not complete" (no manifests, no exact pins, or every lookup failed), and its negative is
+explicitly bounded: `ecosystem: ACTIONS` returns nothing, so **pinned CI actions are not covered**.
+
+`pinned-vuln-scan.py` needs no install beyond `gh`, which the skill already requires, and it
+hand-rolls its version comparator rather than importing `packaging` — measured, that module is
+importable on only one of the four interpreters on a typical machine, and a probe that dies on
+`ImportError` reports nothing. The comparator was differentially tested against `packaging` over
+**144,199 ordered version pairs (100% agreement)** and against the semver.org §11 precedence chain,
+its range evaluator checked against **736 real advisory ranges** from 43 packages, and its own
+test suite mutation-tested to **28/28 mutants caught** — including three rounds where a survivor
+exposed a real gap, one of them a bug the suite provably could not detect. Against live API data,
+**38 findings across 7 packages were independently re-derived with 0 precision violations**. Running
+it on real manifests also found a false negative no fixture had: hash-pinned `pip-compile` output
+(`attrs==25.3.0 \` followed by `--hash` lines) parsed as *no pins at all*, so the most rigorously
+pinned repos were exactly the ones reported as having nothing to check.
 
 ## Install
 
@@ -221,8 +237,8 @@ This repo runs the same gates it recommends (dimensions 8, 11, 18), in four jobs
 full-history secret scan, **actionlint** on its own workflow, a **SKILL.md structure check** (valid
 `name`/`description` frontmatter, substantive body, all 19 dimensions present, the three output
 buckets in order, the severity rules stated, no leftover placeholders) plus a check that the
-example review obeys the bucket structure, and **shellcheck + ruff + the helper-script suite** (118
-tests, including the six gates on the semgrep rules). Each check ships with a negative control — it
+example review obeys the bucket structure, and **shellcheck + ruff + the helper-script suite** (123
+tests, including the six gates on the semgrep rules and `pinned-vuln-scan.py`'s offline self-test). Each check ships with a negative control — it
 was verified to *fail* when the thing it guards is removed, per the skill's own dimension 11.
 See `.github/workflows/ci.yml`.
 
