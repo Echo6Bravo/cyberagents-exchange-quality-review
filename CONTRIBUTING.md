@@ -75,9 +75,15 @@ the last real tag. Both `v1.1.0` and `v1.2.0` were created together once that wa
 1. Rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD` and open a fresh empty `## [Unreleased]`
    above it. **The dash is an em dash (—)**, matching the existing headings.
 2. Merge that PR to `main`. Do this *before* tagging: the consistency job fails on a tag whose
-   CHANGELOG section is not yet on `main`.
-3. Tag the merge commit and push the tag:
-   `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
+   CHANGELOG section is not yet on `main`. The job has one narrow carve-out so this step doesn't
+   require merging a red pipeline — on a **pull request**, a version section the PR itself adds is
+   allowed to be untagged, because the tag has to point at the merge commit that doesn't exist yet.
+   The carve-out is scoped by diffing against the base branch's `CHANGELOG.md`: a section that was
+   already on `main` and is still untagged is the `63e4fa0` defect and stays an error. `main` and tag
+   pushes get no carve-out.
+3. Tag the merge commit and push the tag, **immediately** —
+   `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`. Between step 2 and this push, `main` is
+   legitimately red (the carve-out is PR-only by design); keep that window to a minute.
 4. Cut the GitHub release: `gh release create vX.Y.Z --title "..." --notes "..."`
 
 Pick the bump by what changed, not by how much work it was: a new rule, scanner, or dimension is
