@@ -434,7 +434,14 @@ ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_S
 ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_SCHEMA })${TAB}yaml.load(manifest)
 ts-unsafe-deserialization${TAB}serializer.unserialize(payload)${TAB}JSON.parse(payload)
 ts-unsafe-deserialization${TAB}eval(userSuppliedExpression)${TAB}JSON.parse(userSuppliedExpression)
-ts-unsafe-deserialization${TAB}new Function(userSuppliedExpression)()${TAB}JSON.parse(userSuppliedExpression)"
+ts-unsafe-deserialization${TAB}new Function(userSuppliedExpression)()${TAB}JSON.parse(userSuppliedExpression)
+py-ssrf-url-from-scanned-data${TAB}requests.get(finding[\"evidence_url\"], timeout=TIMEOUT).json()${TAB}requests.get(STATUS_URL, timeout=TIMEOUT).json()
+py-ssrf-url-from-scanned-data${TAB}f\"https://{host}/api/v1/findings/{finding_id}\"${TAB}\"https://cloud.tenable.com/api/v1/findings\"
+py-ssrf-url-from-scanned-data${TAB}urllib.request.urlopen(finding[\"evidence_url\"]).read()${TAB}urllib.request.urlopen(STATUS_URL).read()
+py-ssrf-url-from-scanned-data${TAB}httpx.get(finding[\"callback\"], timeout=TIMEOUT)${TAB}httpx.get(STATUS_URL, timeout=TIMEOUT)
+py-failopen-on-exception${TAB}        return True${TAB}        raise RuntimeError(\"policy unreadable\")
+py-failopen-on-exception${TAB}        return []${TAB}        raise RuntimeError(\"findings unreadable\")
+py-failopen-on-exception${TAB}        pass${TAB}        raise"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)
@@ -445,7 +452,9 @@ ts-wildcard-cors${TAB}app.get(\"/findings\"${TAB}app.get(\"/vulnerabilities\"
 ts-binds-all-interfaces${TAB}app.listen(PORT, \"0.0.0.0\");${TAB}app.listen(OTHER_PORT, \"0.0.0.0\");
 ts-untrusted-data-in-llm-system-prompt${TAB}model: \"claude-sonnet-5\"${TAB}model: \"claude-opus-5\"
 ts-weak-hash-or-random${TAB}.update(body).digest(\"hex\")${TAB}.update(otherBody).digest(\"base64\")
-ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(otherText, { schema: yaml.DEFAULT_FULL_SCHEMA })"
+ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(otherText, { schema: yaml.DEFAULT_FULL_SCHEMA })
+py-ssrf-url-from-scanned-data${TAB}finding[\"evidence_url\"], timeout=TIMEOUT).json()${TAB}finding[\"remediation_url\"], timeout=TIMEOUT).json()
+py-failopen-on-exception${TAB}log.warning(\"could not load findings; continuing\")${TAB}log.info(\"could not load findings; retrying\")"
 
   # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
   # this whole gate stays green while proving nothing about it.

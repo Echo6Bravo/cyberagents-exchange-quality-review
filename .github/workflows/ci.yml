@@ -58,8 +58,15 @@ jobs:
         # carrying the reason -- never widen an exclude, which would blind this step to the next file.
         #
         # Negative control (measured, not assumed): with the percent-format spellings restored in
-        # that fixture this step reports "Found 3 errors" and fails; ruff's `S` rules stay off here
-        # for the same reason as everywhere else -- bandit owns that lane (S501 == B501).
+        # that fixture this step reports "Found 3 errors" and fails.
+        #
+        # On ruff's `S` (flake8-bandit) rules, corrected after measuring: the policy is that we do not
+        # SELECT `S`, because bandit owns that lane (S501 == B501) and enabling the set would report
+        # every Python security finding twice. But ruff 0.16.1's DEFAULT rule set already includes
+        # S102/S110/S112, so "the S rules stay off here" is not literally true and never was --
+        # `try/except/pass` in py-failopen-on-exception.py is flagged by default and carries a narrow
+        # `# noqa: S110` with its reason. Do not "fix" that by adding an `S`-wide ignore: that would
+        # turn a 3-rule overlap into a blanket exemption and blind this step to the next fixture.
         run: |
           pip install --quiet ruff==0.16.1
           ruff check --no-cache .
