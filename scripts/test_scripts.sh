@@ -173,11 +173,12 @@ PV="$HERE/pinned-vuln-scan.py"
 # This scanner is Python, so neither the CI `shellcheck scripts/*.sh` glob nor anything else picks
 # it up -- it has to be invoked from here or its ~60 assertions run only when someone remembers to.
 # That is the same silent-coverage failure this repo just committed with ruff, so it is wired in
-# deliberately rather than left to a habit. The self-test is fully offline: no network, and it
-# empties PATH for the branch that needs `gh` absent, so it is safe to gate on every push.
+# deliberately rather than left to a habit. The self-test is offline -- every `gh` code path is
+# driven by a stub on a temporary PATH, never by a real call -- so it is safe to gate on every
+# push. Verified, not assumed: the suite passes with all egress blackholed via a dead proxy.
 python3 "$PV" --self-test >/dev/null 2>&1; chk $? 0 "self-test suite passes (offline)"
 # --- Prove the self-test is a real guard, not a tautology (dim 11, and the suite's own rule) ---
-# The suite was mutation-tested to 27/27 during development; two rows are re-run here so a future
+# The suite was mutation-tested to 28/28 during development; two rows are re-run here so a future
 # edit that guts an assertion cannot land green. Each mutates a copy and requires the suite to FAIL.
 W=$(mktemp -d "${TMPDIR:-/tmp}/pvs.XXXXXX")
 cp "$PV" "$W/s.py"; cp "$HERE/test_pinned_vuln_data.json" "$W/" 2>/dev/null
