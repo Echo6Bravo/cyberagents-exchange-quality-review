@@ -123,6 +123,21 @@ rules:
     # documents for `paths: include`. A direct scan of this rule's fixture still reports 11 findings on
     # 1 file scanned, and `semgrep test` stays green, so Gate 5's mutation rows still work. Re-check
     # both if this list is edited: the fixture basename must not match any glob here.
+    #
+    # THIS FILTER MEASURES AS INERT AGAINST A CORPUS THAT LACKS AN EMPTY `.semgrepignore`, and that is
+    # the most misleading result in this ruleset, so it is written down. Re-measured all four ways on
+    # the 1074-file corpus, with the block above stripped to get a no-filter baseline:
+    #
+    #                        with empty .semgrepignore     without (bundled list active)
+    #     no `paths:`         173 findings / 1205 files      60 findings / 880 files
+    #     this `paths:`        60 findings /  810 files      60 findings / 880 files
+    #
+    # The bundled ignore list drops the same test files this filter does, so removing the filter looks
+    # harmless -- 60 either way -- and someone ablating it on a default checkout would correctly measure
+    # "no change" and delete a filter that is doing real work. It removes 113 findings when the corpus
+    # is actually scanned in full. Ablate this one WITH the override in place, or the measurement lies.
+    # Note also that the two right-hand cells agree at 60 by coincidence of overlap, not because the
+    # bundled list is equivalent: it ignores 97 files this rule would otherwise want scanned.
     paths:
       exclude:
         - "*_test.*"

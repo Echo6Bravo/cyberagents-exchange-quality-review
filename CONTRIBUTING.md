@@ -69,6 +69,14 @@ expected to keep that bar green.
   the noise, *measure* it: an assigned-from-literal exclusion was tried here and rejected because it
   did not scope to the URL variable — any unrelated `const method = "GET";` in the function silently
   suppressed **both** real probe defects. A filter that swallows true positives is worse than noise.
+- **Ablate a `paths:` filter with an empty `.semgrepignore` in the corpus root, or the measurement
+  lies.** Semgrep's bundled ignore list already drops `tests/`, so a test-excluding `paths:` filter can
+  measure as completely inert on a default checkout while doing real work on a full scan. Measured four
+  ways on `ts-ssrf-url-from-scanned-data`: **173 findings with the filter removed and the override in
+  place, but 60 both with and without the filter when the bundled list is active.** Anyone ablating
+  that filter without the override would correctly observe "no change" and delete something that
+  removes 113 findings. The same override changes `ts-path-write-without-containment` from 41/880 to
+  43/1205. Whenever you quote a corpus number, say whether the override was in place.
 - **A Python rule does not automatically deserve a TypeScript counterpart.** Check the semantics port
   first. `py-caseless-string-case-check` was deliberately *not* ported: the Python bug depends on
   `"123".islower()` and `"123".isupper()` both being False, while JS's `s === s.toLowerCase()` is
