@@ -60,6 +60,48 @@ All notable changes to this skill are documented here. The format follows
   reach `semgrep.dev` while semgrep's own fetch still fails (different trust stores), and the
   config fetch has no bounded timeout.
 
+- **`scripts/pinned-vuln-scan.py`** — checks whether exactly-pinned dependencies are *known
+  vulnerable*, via the GitHub Advisory DB through `gh` (dimension 18). Dimension 18 previously
+  reviewed only whether deps were **pinned**, which is the opposite failure and says nothing about
+  this: a pin reproduces whatever it was, including reproducibly vulnerable, and never drifts onto a
+  fix. Uses `gh` because it is already a stated prerequisite — `pip-audit`/`osv-scanner` would be new
+  installs, and the GitHub API is reachable on networks where semgrep's registry and CodeQL packs
+  are TLS-proxy-blocked. Exit codes carry the anti-silent-zero contract: 0 clean, 1 found,
+  **2 could not complete** (no manifests, no exact pins, or every lookup failed), and internally a
+  failed lookup returns `None` where "asked, nothing known" returns `[]` — collapsing those two is
+  how an outage becomes a clean bill of health. Range specifiers (`^1.2.3`) are deliberately
+  excluded as dimension 18's *other* finding, so the same defect is never counted twice.
+  - **The version comparator is hand-rolled on purpose.** `packaging` was measured importable on
+    only **1 of 4** interpreters on this machine, and a probe that dies on `ImportError` reports
+    nothing. It is instead used as a *test-time oracle*: **144,199 ordered pairs, 100.0000%
+    agreement**, plus the semver.org §11 normative precedence chain as a second, independent oracle
+    (the npm `semver` package was unavailable — the registry returns 403 by policy). Reconciling
+    both is what forces `a`/`b`/`c` to share ranks with `alpha`/`beta`/`rc` rather than sorting
+    alphabetically, and the one divergence — a bare numeric tail like `1.7.1-2` is a *post*-release
+    in PEP440 and a *pre*-release in semver — is documented where it is decided.
+  - **The range grammar was enumerated, not assumed:** 1122 real ranges across 43 packages use
+    exactly five forms, and `<= V` + `>= V, <= V` are **15%** of them, so a `>=`/`<`-only
+    implementation is silently wrong on one range in seven. All five are tested. Dedupe happens
+    **after** range matching because the same GHSA is published against multiple branches with
+    different ranges (`GHSA-34jh-p97f-mpxf` is both `< 1.26.19` and `>= 2.0.0, < 2.2.2`), so
+    counting nodes instead of advisories inflates the finding count.
+  - **Its own test suite was mutation-tested to 28/28** over three rounds, and every round found a
+    real gap rather than confirming the suite: an early version missed the exact `beta.1`/`beta.8`
+    collapse the oracle had caught, and a later one stayed green while the corpus invariant check
+    was disabled — 736 assertions asserting nothing, because nothing tests a test. That audit is now
+    a named function checked against planted violations with a negative control. One survivor was
+    resolved by *deleting* code proven inert (identical output on 276,396 pairs) rather than adding
+    a test for it. **The negative is stated as a bound:** `ecosystem: ACTIONS` returns nothing, so
+    pinned CI actions are uncovered, and transitive deps count only where a lockfile pins them.
+  - **Measured against live data, which found a false negative the fixtures did not.** Run against
+    real manifests, it missed all 12 pins in a `uv pip compile --generate-hashes` file: the trailing
+    ` \` before the `--hash` lines defeated the version regex's end anchor. That is the strictest
+    pinning style there is, so the best-pinned repos were the ones being reported as having nothing
+    to check — an unearned clean. Fixed and pinned by a test. On live API data the found-path was
+    then verified end to end: **38 findings across 7 packages, all 38 independently re-derived**
+    (every flagged pin genuinely satisfies the cited range *and* sorts below the cited fix, 0
+    violations), with a negative control confirming a pin above the fix version drops to exit 0 and
+    `^4.17.1` correctly excluded as a range rather than a pin.
 - **CI now runs `ruff` (pinned), which it had been recommending without running.** Found the way
   these things should be found: three `UP031` findings had been sitting in a shipped semgrep fixture
   because nothing linted it. The README listed `ruff` in the toolkit and claimed this repo runs the
