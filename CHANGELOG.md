@@ -6,6 +6,21 @@ All notable changes to this skill are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Gate 5b: mutation coverage at *finding* granularity, and a paired proof that it works.** Gate 5's
+  coverage check asserted only that every rule appears in the mutation table — satisfied by a single
+  row. So editing a rule to add a new `pattern-either` branch could ship with **no test covering the
+  new branch** and the suite would still print all-green. That is not hypothetical: the
+  framework-factory fix below added **3 fixture findings and 0 mutation rows**, and Gate 5 passed. The
+  ablation that proved the branch worked was run by hand and never committed, so nothing in the suite
+  reproduced it. Gate 5b now requires **every baseline fixture finding to be neutralized by some
+  mutation row**; a finding no row can remove is a matcher branch with no committed test. Measured when
+  added: **11 such findings across 6 rules**, 4 of them in the rule that had just been edited — rows
+  added for all 11. `gate5b-self` reproduces the historical defect (drops the 3 factory rows from the
+  manifest) and requires Gate 5b to fail naming lines 43, 48, 55; it also fails loudly if the ablation
+  turns out to be a no-op, so it cannot pass vacuously. It reuses the existing batch scan and manifest
+  rather than re-scanning, so the proof costs no measurable wall clock. Suite: 132 → **145 tests**.
+
 ### Fixed
 - **`ts-binds-all-interfaces` had a blind spot that made its zero look like good news.** Measuring the
   TS rules against 1074 TypeScript files from six real MCP servers, this rule reported 0 findings — in a
