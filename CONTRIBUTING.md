@@ -63,3 +63,24 @@ expected to keep that bar green.
 This project uses [Semantic Versioning](https://semver.org/) and a
 [Keep a Changelog](https://keepachangelog.com/) `CHANGELOG.md`. Note user-facing changes under
 an "Unreleased" heading in your PR.
+
+### Cutting a release
+
+CI enforces that tags and `CHANGELOG.md` agree (the **Release consistency** job), so these steps are
+not optional bookkeeping — skip one and the build fails. The job exists because this repo drifted:
+commit `63e4fa0` was titled "Release 1.1.0" and shipped a `## [1.1.0]` section, but no `v1.1.0` tag
+was ever created, so the repo asserted a release that did not exist while 12 commits piled up past
+the last real tag. Both `v1.1.0` and `v1.2.0` were created together once that was noticed.
+
+1. Rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD` and open a fresh empty `## [Unreleased]`
+   above it. **The dash is an em dash (—)**, matching the existing headings.
+2. Merge that PR to `main`. Do this *before* tagging: the consistency job fails on a tag whose
+   CHANGELOG section is not yet on `main`.
+3. Tag the merge commit and push the tag:
+   `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
+4. Cut the GitHub release: `gh release create vX.Y.Z --title "..." --notes "..."`
+
+Pick the bump by what changed, not by how much work it was: a new rule, scanner, or dimension is
+**MINOR**; a fix to an existing rule or prose is **PATCH**; removing or renaming something a caller
+depends on (a script, a rule id, a flag) is **MAJOR**. Note that a version number consumed by a
+release commit is spent — do not reuse it even if the release was never tagged.

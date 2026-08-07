@@ -5,6 +5,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -93,6 +94,69 @@ jobs:
           fi
           grep -q 'gate5-self' /tmp/helper-tests.log \
             || { echo "::error::gate5 self-check never ran"; exit 1; }
+
+  release-consistency:
+    name: Release consistency (tags <-> CHANGELOG)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0        # need full history AND tags; a shallow clone has neither
+      - name: Tags and CHANGELOG must agree
+        # Added because this repo drifted exactly the way it warns others about. Commit 63e4fa0 was
+        # titled "Release 1.1.0" and shipped a `## [1.1.0]` CHANGELOG section -- but no v1.1.0 tag
+        # was ever created, so for three days the repo asserted a release that did not exist, while
+        # 12 commits piled up past the last real tag. Dimension 12 (overstated coverage) and
+        # dimension 18 (provenance) both name this shape; nothing was checking for it here.
+        #
+        # Three checks, deliberately bidirectional -- the drift can start from either side:
+        #   1. a pushed tag vX.Y.Z must have a matching CHANGELOG section
+        #   2. a commit claiming "Release X.Y.Z" must have the tag        <- caught 63e4fa0
+        #   3. a CHANGELOG section for X.Y.Z must have the tag           <- notes written, no release
+        # Checks 2 and 3 run on EVERY trigger, not just tag pushes, so the drift is caught on the PR
+        # that introduces it rather than weeks later at release time.
+        #
+        # NOTE: the version headings in CHANGELOG.md use an EM DASH, not a hyphen. The regex accepts
+        # either, so an editor's autocorrect cannot silently disable this gate -- a check that stops
+        # matching is worse than no check, because it reads as passing.
+        run: |
+          python3 - "$GITHUB_REF" <<'PY'
+          import re, subprocess, sys
+
+          src = open("CHANGELOG.md").read()
+          errs = []
+          secs = {m.group(1) for m in
+                  re.finditer(r'(?m)^## \[(\d+\.\d+\.\d+)\][ \t]*[\u2014-]', src)}
+          tags = set(subprocess.run(["git", "tag", "--list", "v*"],
+                                    capture_output=True, text=True).stdout.split())
+
+          ref = sys.argv[1] if len(sys.argv) > 1 else ""
+          if ref.startswith("refs/tags/"):
+              tag = ref.split("/")[-1]
+              ver = tag.lstrip("v")
+              if not re.fullmatch(r'\d+\.\d+\.\d+', ver):
+                  errs.append(f"tag {tag} is not a vX.Y.Z semantic version")
+              elif ver not in secs:
+                  errs.append(f"tag {tag} has no '## [{ver}]' section in CHANGELOG.md")
+
+          log = subprocess.run(["git", "log", "--format=%h %s"],
+                               capture_output=True, text=True).stdout
+          for line in log.splitlines():
+              sha, _, subj = line.partition(" ")
+              m = re.match(r'(?i)release\s+v?(\d+\.\d+\.\d+)\b', subj.strip())
+              if m and f"v{m.group(1)}" not in tags:
+                  errs.append(f'commit {sha} claims "{subj}" but tag v{m.group(1)} does not exist')
+
+          for ver in sorted(secs):
+              if f"v{ver}" not in tags:
+                  errs.append(f"CHANGELOG has a [{ver}] section but no tag v{ver}")
+
+          print(f"CHANGELOG sections: {sorted(secs)}")
+          print(f"tags present:       {sorted(tags)}")
+          for e in errs:
+              print(f"::error::{e}")
+          sys.exit(1 if errs else 0)
+          PY
 
   skill-structure:
     name: SKILL.md structure (Exchange-loadable)
