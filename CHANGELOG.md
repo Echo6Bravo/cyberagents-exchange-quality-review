@@ -7,6 +7,46 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Three TypeScript counterparts for Python-only rules, each measured against the 1074-file MCP corpus
+  before it was considered done.** 12 rules → **15**. Authoring and measuring is one task here, because
+  `ts-binds-all-interfaces` (below) proved that a rule the corpus has never seen can ship looking
+  complete while missing every real site.
+  - **`ts-failopen-on-exception`** (dim 3, CWE-636). Matches a `catch` that returns `true` or `[]`.
+    The corpus was measured *first*: 33 permissive catch returns in 21 files, distributed **null: 18,
+    undefined: 11, []: 4, true: 0** — matching `null`/`undefined` would have made the rule ~88% noise,
+    so that exclusion is a measurement rather than a preference. `true` measured zero and is kept anyway
+    as the highest-severity shape at no FP cost. Four pattern branches, not two, because `catch { }` and
+    `catch ($E) { }` are **different patterns** to semgrep: measured, the unbound form alone matched
+    probe lines [1,3] and missed [2,4]. All 4 corpus hits are the documented honest-absent-collection
+    FP class, cited by file and line.
+  - **`ts-ssrf-url-from-scanned-data`** (dim 2/17, CWE-918). Nine sinks across `fetch`/`axios`/`got`/
+    `http.request`. **The noisiest rule in the set, deliberately**: 182 corpus findings, cut to 60 by a
+    test-file `paths:` filter and two provably-safe URL exclusions (literal host with interpolated
+    path/port/query, and relative URLs). It stays at that volume because **154 of the 182 pass a bare
+    variable** that no syntactic rule can resolve, so its output is a queue of one question — *where does
+    the host come from?* `examples/` is **not** excluded, costing 14 findings of noise, because example
+    code in a submission is code users copy. Carries the ruleset's only `paths:` filter, with the
+    divergence and a verified no-silent-zero check recorded in its header.
+  - **`ts-path-write-without-containment`** (dim 2, CWE-22). Seven `fs` write sinks. Guard spellings were
+    **grepped from the corpus before being written**, not imagined: `startsWith(resolve(DIR) + sep)`,
+    `startsWith(ROOT + path.sep)`, and `path.relative(base, dest).startsWith("..")`. 43 findings, 11
+    outside tests. Its most instructive hit is a **false positive** — `servers/.../lib.ts:165` writes an
+    unguarded parameter whose sole caller validates the path one frame up, verified by reading both call
+    sites. The header states plainly that an accepted guard may still be **wrong**: `startsWith(base)`
+    without the trailing separator lets `/data/output-evil` past a check against `/data/out`.
+  - **24 new `MUTS` rows and Gate 5b green.** Every one of the 24 fixture findings these rules add is
+    neutralized by its own row, so each pattern branch has a committed test. Gate 5b caught two real
+    gaps while this landed — a row whose anchor text no longer matched, and one whose replacement
+    truncated a trailing comment into invalid TypeScript. Suite: 145 → **169 tests**.
+  - **Adversarial ablation of all 30 pattern elements across the three rules, run to completion rather
+    than sampled.** Every sink, exclusion, and guard was removed individually and required to change the
+    fixture result. First pass found **6 inert elements** — 3 sink literal-exclusions covering sinks the
+    fixture never called, 1 unexercised `axios.get` branch, and 2 `metavariable-regex` blocks (below) —
+    all fixed by extending the fixtures or deleting the pattern. Final state: **0 inert**.
+- **A fourth counterpart was scoped and deliberately not written.** A TS version of
+  `py-caseless-string-case-check` would be a rule for a bug that does not exist: in Python
+  `"123".islower()` and `"123".isupper()` are *both* False, which is what makes the check wrong, but in
+  JS `s === s.toLowerCase()` is **true** for `"123"`. The semantics are inverted, not transplanted.
 - **Gate 5b: mutation coverage at *finding* granularity, and a paired proof that it works.** Gate 5's
   coverage check asserted only that every rule appears in the mutation table — satisfied by a single
   row. So editing a rule to add a new `pattern-either` branch could ship with **no test covering the
@@ -22,6 +62,17 @@ All notable changes to this skill are documented here. The format follows
   rather than re-scanning, so the proof costs no measurable wall clock. Suite: 132 → **145 tests**.
 
 ### Fixed
+- **A claim about JS/Python template-literal divergence was wrong, and the ablation caught it before it
+  shipped.** The first draft of `ts-ssrf-url-from-scanned-data` carried two `metavariable-regex` blocks
+  (`^`[^`$]*`$`) to exclude static template literals, on the stated belief that JS diverged from Python —
+  that `"..."` would not match a template literal at all. Ablation showed both blocks were **inert**:
+  removing them changed the fixture result not at all. Measured directly, `pattern-not: fetch("...", ...)`
+  excludes a static template **and** still fires on an interpolating one, exactly the Python behaviour the
+  sibling rule relies on. Both blocks were deleted and the header now records the corrected measurement
+  in place of the wrong claim. The narrower trap that the draft was groping at is real and is documented
+  instead: writing the exclusion with **backticks** suppresses all template literals including
+  interpolated ones, which measurably hides a real SSRF and would have left the rule near-vacuous while
+  looking complete.
 - **`ts-binds-all-interfaces` had a blind spot that made its zero look like good news.** Measuring the
   TS rules against 1074 TypeScript files from six real MCP servers, this rule reported 0 findings — in a
   corpus containing **102 `.listen(` calls and 17 files mentioning `0.0.0.0`**. The previous header

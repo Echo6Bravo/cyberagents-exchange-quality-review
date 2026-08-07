@@ -53,6 +53,27 @@ expected to keep that bar green.
   **Gate 5b** now asserts at finding granularity — every fixture finding must be neutralized by some
   row — and `gate5b-self` proves it by reproducing that exact defect. Gate 5 is batched, so extra
   rows cost almost no wall clock; there is no reason to skip them.
+- **Ablate every pattern element, not a sample, and delete the inert ones.** For each sink, exclusion,
+  and guard in a new rule, remove it alone and require the fixture result to change: dropping an
+  exclusion must *gain* a finding, dropping a sink must *lose* one. Anything that changes nothing is
+  either a pattern that does nothing or — more often — a branch the fixture never exercises, which
+  means it has no committed test. The three rules added in the current `[Unreleased]` entry started
+  with **6 inert elements out of 30**, including two `metavariable-regex` blocks written on a belief
+  about JS/Python divergence that turned out to be **false**. Ablation is what caught it; `semgrep test`
+  was green the whole time. Fix an inert element by extending the fixture, or by deleting the pattern —
+  never by leaving it in place looking protective.
+- **Measure a new rule against a real corpus before calling it done, and report the noise class rather
+  than the count.** A rule that fires 182 times is not a finding list, and shipping the number alone
+  invites a reviewer to paste output they have not read. Say what the dominant shape is, whether it is
+  separable by syntax, and what single question a human must answer per hit. If a filter would reduce
+  the noise, *measure* it: an assigned-from-literal exclusion was tried here and rejected because it
+  did not scope to the URL variable — any unrelated `const method = "GET";` in the function silently
+  suppressed **both** real probe defects. A filter that swallows true positives is worse than noise.
+- **A Python rule does not automatically deserve a TypeScript counterpart.** Check the semantics port
+  first. `py-caseless-string-case-check` was deliberately *not* ported: the Python bug depends on
+  `"123".islower()` and `"123".isupper()` both being False, while JS's `s === s.toLowerCase()` is
+  **true** for `"123"`. Inverted, not transplanted. Writing the port would have added a rule for a bug
+  that does not exist in the target language.
 - **"All gates green" is not "tested" when the gate does not cover what you changed.** Before
   claiming a matcher change is verified, ask which committed test fails if the change is reverted. An
   ablation run by hand in a shell is a measurement, not a test — the same distinction this repo

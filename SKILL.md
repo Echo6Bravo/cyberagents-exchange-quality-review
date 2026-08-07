@@ -133,7 +133,7 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
   as a tool that ran.
   **Bound the claim to the rules that exist.** The set covers dimensions 2, 3, 6, 8, 11, 13, and 17 —
-  not "JS/TS security." Twelve rules, each with a documented blind-spot list in its own header; read the
+  not "JS/TS security." Fifteen rules, each with a documented blind-spot list in its own header; read the
   header of any rule you cite before quoting it, because several deliberately trade recall for a hit
   list a human will read (`ts-weak-hash-or-random` ignores bare `Math.random()`; `ts-binds-all-interfaces`
   cannot see `listen(port)` with no host at all, which is the *commonest* real exposure).
@@ -170,6 +170,24 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   (session tokens, API keys, reset links, CSRF tokens, nonces) is. **Read the spec instead of inferring
   from the field's name** — a value whose name sounds like a security control is the easiest way to talk
   yourself into a finding that is not there. Write the answer down before you report the hit.
+  **Treat a high-volume rule as a triage queue and say so in the report.** `ts-ssrf-url-from-scanned-data`
+  is the noisiest rule here by a wide margin: 182 findings on that same corpus, cut to 60 by excluding
+  test files and provably-safe URL shapes. It stays at that volume on purpose, because 154 of the 182
+  pass a **bare variable** (`fetch(url, {…})`) — no syntactic hint of where the host came from, and
+  nothing short of interprocedural taint can separate them. So do not paste its output. For each hit
+  answer one question: **where does the host come from?** A config or env base URL with a fixed path is
+  not a defect; scanned data, an API response, or tool input is. Report the answers, not the count —
+  and if you have not answered the question, you have not reviewed the finding. The same discipline
+  applies to `ts-path-write-without-containment`, whose most instructive corpus hit is a **false
+  positive**: `fs.writeFile` on an unguarded parameter whose sole caller validates the path one frame
+  up, which an intraprocedural rule cannot see.
+  **Silence from a containment rule means a guard exists, not that it works.** Node has no
+  `is_relative_to()`; the idiom is the string comparison `resolved.startsWith(base + path.sep)`, and
+  **omitting the separator is a real bug** — with `base = "/data/out"`, the path `/data/output-evil`
+  passes. `ts-path-write-without-containment` accepts both spellings, because rejecting the loose one
+  would flag most correct code too. So when that rule is quiet on a file that writes user-influenced
+  paths, check the separator by hand, and check for a `realpath` call: a contained **symlink** writes
+  wherever it points, which no pattern in this set can see.
   **Scope N/A honestly by surface.** `ts-token-in-localstorage` found nothing across all 1074 files
   because a Node MCP server has no DOM and calls no web-storage API at all. On a submission with no
   browser surface that rule is **N/A, not passed** — "no credential-storage issues found" after
