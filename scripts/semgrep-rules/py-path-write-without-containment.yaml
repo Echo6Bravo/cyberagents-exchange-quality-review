@@ -49,6 +49,7 @@ rules:
     metadata:
       qr-dimension: 2
       cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      owasp: "A01:2025 Broken Access Control (path traversal)"
       confidence: MEDIUM
     patterns:
       - pattern-either:

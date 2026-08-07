@@ -63,6 +63,7 @@ rules:
     metadata:
       qr-dimension: 17
       cwe: "CWE-1327: Binding to an Unrestricted IP Address"
+      owasp: "A02:2025 Security Misconfiguration"
       confidence: MEDIUM
     pattern-either:
       # The trailing `...` covers the callback form too; measured to match both `listen(p, "0.0.0.0")`

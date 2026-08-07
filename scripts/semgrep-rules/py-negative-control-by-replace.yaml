@@ -60,6 +60,7 @@ rules:
     metadata:
       qr-dimension: 11
       cwe: "no applicable CWE -- invalid test control, not a vulnerability class"
+      owasp: "no applicable category -- invalid test control, not a vulnerability class"
       confidence: MEDIUM
     patterns:
       # Both mutation spellings, against both rejection spellings. The `assert not` and

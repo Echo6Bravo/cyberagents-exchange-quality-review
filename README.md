@@ -173,6 +173,20 @@ Invocation (the two flags are not optional — without them a blocked update che
 semgrep scan --config scripts/semgrep-rules --metrics=off --disable-version-check <target>
 ```
 
+Every rule declares the OWASP 2025 category it maps to — or states that none applies, as the two
+dimension-11 test-hygiene rules do — so a per-category view is derivable when you want one:
+
+```bash
+grep -h owasp: scripts/semgrep-rules/*.yaml | sort | uniq -c | sort -rn
+```
+
+There is deliberately **no OWASP coverage table** in `SKILL.md`. An embedded copy of a list maintained
+elsewhere goes stale silently while still reading as current, and a mapping table becomes wrong the
+moment a rule is added or removed — the overstated-coverage failure mode this skill audits others for.
+Cite categories **by name, not number**: four numbers moved between the 2021 and 2025 lists, so a stale
+"A10 SSRF" reference now misleads. `gate2c` fails the build if any rule omits the key, because the
+derive-it-on-demand trade only holds while the metadata is complete.
+
 ### Probes this skill ships itself
 
 For bug classes no off-the-shelf scanner covers, in `scripts/`:

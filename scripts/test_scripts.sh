@@ -321,6 +321,38 @@ print(sum(len(v.get("checks") or {}) for v in (d.get("results") or {}).values())
   done
   chk "${mismatch:-none}" "none" "gate2b: rule id == filename (mismatched:${mismatch:-none})"
 
+  # ---- Gate 2c: every rule declares an `owasp:` key. ---------------------------------------
+  # SKILL.md tells reviewers the per-category view is derivable with
+  # `grep owasp: scripts/semgrep-rules/*.yaml` INSTEAD of shipping a coverage table -- a table
+  # would go stale the moment a rule is added. That trade only holds if the key is actually on
+  # every rule, so the claim is gated here rather than trusted. A rule with no applicable
+  # category must say so explicitly ("no applicable category -- ..."), matching the idiom the
+  # `cwe:` field already uses on the two dimension-11 test-hygiene rules; silence is not an
+  # acceptable answer, because an absent key is indistinguishable from an unmapped one.
+  no_owasp=""
+  for y in "$RULES"/*.yaml; do
+    grep -qE '^[[:space:]]*owasp:[[:space:]]*\S' "$y" || no_owasp="$no_owasp $(basename "$y" .yaml)"
+  done
+  chk "${no_owasp:-none}" "none" "gate2c: every rule declares owasp: (missing:${no_owasp:-none})"
+
+  # ---- Gate 2d: every rule id SKILL.md cites resolves to a real rule file. -----------------
+  # The prose names specific rules as the backstop for a dimension. When a rule is renamed or
+  # dropped, that citation becomes a pointer to nothing -- and it reads as coverage. Measured
+  # cause for this gate: three citations named only `py-*` for months after the `ts-*`
+  # counterparts existed, so a reviewer working a TS submission would not learn the TS rule was
+  # there. That specific drift is invisible here (a stale-but-valid id still resolves), so this
+  # gate catches only the dangling case; the lagging-citation case has no mechanical check.
+  # The id must be matched inside a BACKTICK SPAN, not bare in prose. A bare `(py|ts)-[a-z-]+`
+  # scan looked right and was wrong: it matched mid-word inside `cyberagents-exchange` (the
+  # skill's own name, twice) and `happy-path-only`, reporting four dangling ids that were never
+  # citations at all. Found by running the gate, not by reading it.
+  dangling=""
+  for rid in $(grep -oE '`(semgrep-rules/)?(py|ts)-[a-z0-9-]+`' SKILL.md \
+                 | tr -d '`' | sed 's|^semgrep-rules/||' | sort -u); do
+    [ -f "$RULES/$rid.yaml" ] || dangling="$dangling $rid"
+  done
+  chk "${dangling:-none}" "none" "gate2d: rule ids cited in SKILL.md exist (dangling:${dangling:-none})"
+
   # ---- Gate 3: the config is valid. --------------------------------------------------------
   # MUST grep the OUTPUT TEXT. `semgrep validate` exits 0 even when it reports
   # "Configuration is invalid" (measured). Do NOT "simplify" this to chk $? 0 -- that silently

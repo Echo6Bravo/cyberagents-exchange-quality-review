@@ -72,6 +72,7 @@ rules:
     metadata:
       qr-dimension: 17
       cwe: "CWE-942: Permissive Cross-domain Policy with Untrusted Domains"
+      owasp: "A02:2025 Security Misconfiguration"
       confidence: HIGH
     pattern-either:
       - pattern: $R.setHeader("Access-Control-Allow-Origin", "*")

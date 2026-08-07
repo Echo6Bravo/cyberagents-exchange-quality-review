@@ -137,6 +137,20 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   header of any rule you cite before quoting it, because several deliberately trade recall for a hit
   list a human will read (`ts-weak-hash-or-random` ignores bare `Math.random()`; `ts-binds-all-interfaces`
   cannot see `listen(port)` with no host at all, which is the *commonest* real exposure).
+  **Each rule carries an `owasp:` key, but this skill is organized by dimension and CWE — not by
+  framework.** Every rule's `metadata` names the OWASP category it maps to (or says explicitly that
+  none applies, as the two dimension-11 test-hygiene rules do), so a per-category view is *derivable*
+  from `grep owasp: scripts/semgrep-rules/*.yaml` at the moment you need it. It is deliberately not
+  written out here as a coverage table. Two reasons, both learned the hard way in this repo: an
+  embedded copy of a list that changes elsewhere goes stale silently and still reads as current — the
+  same argument that keeps the Exchange checklist out of this file — and a mapping table becomes wrong
+  the moment a rule is added or removed, which is dimension 12's failure mode committed by the artifact
+  that audits others for it. **Cite OWASP categories by name, never by number alone**: four category
+  numbers moved between the 2021 and 2025 lists, so a stale "A10 SSRF" reference is now actively
+  misleading. **Fetch the live list — it wins over anything inferred from these rules.** And note what
+  the metadata cannot tell you: several categories here are covered by prose, by a non-semgrep probe, or
+  by `bandit`'s own rule ids, so an absent `owasp:` value means no *rule* maps to it, not that the
+  dimension set misses it.
   **Report a zero against the corpus that produced it.** Measured on 1138 real JS/TS files: three of
   these rules found nothing because that corpus contains **no instances of what they look for** — a
   true negative with no discriminating power. "0 false positives" from such a run is an overclaim of
@@ -285,7 +299,9 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      check, a `startswith`, or a substring test is not an allowlist. Then ask the question the
      allowlist does not answer: **an allowlisted host can redirect to a blocked one**, and
      `requests` follows redirects by default, so `allow_redirects=False` (or a re-check on the final
-     URL) is the missing half. `semgrep-rules/py-ssrf-url-from-scanned-data` is the backstop.
+     URL) is the missing half. `semgrep-rules/py-ssrf-url-from-scanned-data` is the backstop, and
+     `ts-ssrf-url-from-scanned-data` covers the TS sinks (`fetch`/`axios`/`got`/`http.request`) —
+     read its header first, because it ships as a **triage queue**, not a finding list.
      `bandit` B310 is **not** coverage for this: it audits the *scheme* on `urlopen`, fires on
      correct constant-URL code too, and does not cover `requests` or `httpx` at all — so "bandit is
      clean" says nothing about where a URL came from.
@@ -328,12 +344,18 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      and better still return a **third state the caller must handle** (`UNAVAILABLE`, or `None` with
      a `checked` flag) so "did not run" can never render as "passed" — note that plain fail-closed
      still conflates "not compliant" with "could not check", which is its own reporting defect.
-     `semgrep-rules/py-failopen-on-exception` is the backstop for the Python shapes. It is additive,
-     not duplicative: `bandit` B110 sees only `try/except/pass` (one of the three shapes), and
-     `ruff` BLE001/S110 flag the *style* of a blind except — none of them distinguish a fail-open in
-     a security decision from a benign one, which is the entire question. It also cannot: a
+     `semgrep-rules/py-failopen-on-exception` is the backstop for the Python shapes, and
+     `ts-failopen-on-exception` for the TS ones. It is additive, not duplicative: `bandit` B110 sees
+     only `try/except/pass` (one of the three shapes), and `ruff` BLE001/S110 flag the *style* of a
+     blind except — none of them distinguish a fail-open in a security decision from a benign one,
+     which is the entire question, and neither tool can parse TS at all. It also cannot: a
      `return []` that legitimately means "no cached rows" is a finding to triage, not a defect, and
-     permissive `{}`/`0`/`None` returns are outside the rule's reach.
+     permissive `{}`/`0`/`None` returns are outside the rule's reach. **The TS rule's narrowness is a
+     measurement, not an oversight** — across 1074 real MCP-server files the permissive `catch` returns
+     were `null` 18, `undefined` 11, `[]` 4, `true` 0, so matching the nullish pair would have made it
+     ~88% noise. `catch { }` and `catch (e) { }` are also *different patterns* to semgrep, so a rule
+     that spells only one silently covers half the sites; both are matched here. When reviewing TS, ask
+     the question by hand for a `catch` returning `null` — the rule deliberately will not.
    - *Would a silent partial failure look identical to a clean result?* (OWASP A09, and the rename
      from "logging failures" is the useful part.) Two questions, in order. **Reconstruction:** from
      the tool's own output and logs alone, can you tell what it actually scanned — which accounts,
@@ -430,9 +452,9 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
     **A destination is only enumerable if it is a constant.** Where the request target is *computed*
     from scanned data, the honest answer to "which hosts does this contact?" is "unbounded" — the
     destination list is whatever the environment says it is. That is dimension 2's SSRF sub-bullet
-    and `semgrep-rules/py-ssrf-url-from-scanned-data`; here it means the README cannot document the
-    egress set at all until an allowlist bounds it. Report the missing allowlist as the egress
-    finding, not as a documentation gap.
+    and `semgrep-rules/py-ssrf-url-from-scanned-data` (`ts-` for the TypeScript sinks); here it means
+    the README cannot document the egress set at all until an allowlist bounds it. Report the missing
+    allowlist as the egress finding, not as a documentation gap.
 
 11. **Tests & CI.** Is each of the above locked in so it can't regress? A finding fixed without
     a regression test is only half-fixed. Confirm: (a) a runnable test suite covers the fixed
