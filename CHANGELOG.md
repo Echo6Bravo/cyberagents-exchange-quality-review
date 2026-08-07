@@ -126,6 +126,21 @@ All notable changes to this skill are documented here. The format follows
 - `setup.sh` now derives its brew list, its non-brew fallback list, and its status report from a
   single `TOOLS` variable. Previously four hand-maintained copies had to agree; editing one without
   the others meant a tool could install but never appear in the coverage report.
+- **Gate 5 (the rule mutation loop) now runs as a single `semgrep scan` instead of one per row,
+  cutting the helper-script suite from 6m27s to 1m45s** — a 3.7× speedup on the same 123 tests.
+  Every baseline, mutant and negative control is staged into its own sibling directory under one
+  tree and scanned together; findings are attributed back by `result.path`. A `semgrep scan` costs
+  ~4.8s wall but only ~1.25s user, so ~95% was process startup — the win is from doing fewer scans,
+  not faster ones. The feared trade did not materialise: every row still gets its own named
+  PASS/FAIL line, because attribution is by directory rather than by invocation, and the 50 Gate 5
+  verdict lines were diffed before and after the rewrite and are identical. Batch equivalence was
+  measured before the rewrite landed: one all-rules scan reproduces the per-rule line sets exactly
+  (47 findings, same 10 line lists), and a broken fixture in one directory does not poison its
+  siblings. `gate5-self` — the check proving the gate catches a tautological rule — was deliberately
+  moved *into* the same batch and judged by the same code path, since run separately it could have
+  kept passing while the batched path was broken, silently disabling the check that proves the
+  optimization safe. This also removes the runtime ceiling that was blocking further rules: the row
+  count is now nearly free.
 
 ### Fixed
 - `setup.sh --check` could **hang indefinitely**: it ran `<tool> --version` for each tool, and
@@ -134,6 +149,19 @@ All notable changes to this skill are documented here. The format follows
   `--disable-version-check` for semgrep and are wrapped in a 10s timeout for every tool, so one
   unresponsive binary degrades to `version probe timed out` instead of stalling the report.
   Verified with a stub whose `--version` sleeps 300s: the report completed in 14s.
+- **A measurement error in how Gate 5's own guards were verified**, worth recording because the
+  first answer was wrong and looked right. Mutating a guard and re-running the suite reports
+  "survivor" for guards that are genuinely load-bearing: each one only fires on a defect that is not
+  present, so disabling it on a healthy tree changes nothing (123 passed / 0 failed either way).
+  An earlier run also compared suite totals from a harness that had copied `scripts/` without
+  `setup.sh`, so six mutants "failed" at 114/9 for one shared environmental reason — `rc=127` — and
+  were scored as caught. The honest test is **paired**: plant the defect, confirm the catch, then
+  disable the guard and confirm the catch disappears. Under that test the per-path `errors` check,
+  the negative-control `same` assertion, the staging-time no-op check (for negative-control rows) and
+  the `gate5-self` inversion are all load-bearing, while the `scanned` and `found NOTHING` checks are
+  diagnostics that name a cause another check would catch anyway. Each verdict is now recorded at the
+  line it describes, so nobody re-derives it — or deletes a guard because mutation testing called it
+  dead code.
 
 ## [1.1.0] — 2026-08-04
 

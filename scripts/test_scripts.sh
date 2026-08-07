@@ -261,21 +261,21 @@ else
   #
   # RUNTIME, measured, because it is the binding constraint on how many rules this suite can hold:
   #   4 rules / 12 mutation rows  -> 4m16s
-  #   4 rules / 12 rows, baseline memoized (see run_mut_table) -> 3m31s
+  #   4 rules / 12 rows, baseline memoized -> 3m31s
   #  10 rules / 40 rows, memoized -> 5m19s and 6m50s on two runs of the SAME tree
+  #  10 rules / 55 rows, memoized (one scan per row) -> 6m27s  [whole suite, 123 tests]
+  #  10 rules / 55 rows, BATCHED (one scan for all of Gate 5) -> 1m45s  [same 123 tests]
   # Note that spread: back-to-back runs of identical code differed by 25%, so treat any single number
   # here as indicative, not a benchmark, and don't chase a regression that is really just variance.
-  # ~6s per `semgrep scan`, dominated by process startup rather than analysis, which is why the fix was
-  # to do FEWER scans rather than faster ones. Memoizing the per-rule baseline removed one scan per
-  # extra row of the same rule; that is what stopped a doubling of the rule count from doubling the
-  # wall clock. No `timeout-minutes` is set on the CI job, so GitHub's 360-minute default applies.
+  # A `semgrep scan` costs ~4.8s wall but only ~1.25s user -- ~95% is process startup, not analysis,
+  # which is why every fix here has been to do FEWER scans rather than faster ones. Memoizing the
+  # per-rule baseline came first; batching the whole gate into one invocation (see Gate 5 below)
+  # superseded it and made the row count nearly free, so new rules no longer cost wall clock.
+  # No `timeout-minutes` is set on the CI job, so GitHub's 360-minute default applies.
   #
-  # THE NEXT OPTIMIZATION, and it is now close: batch the mutations themselves, one scan per rule
-  # instead of one per row (write all N mutants of a fixture into one directory, scan once, attribute
-  # findings by path). Not done yet because each row currently gets an individually named PASS/FAIL
-  # line, and losing that would make a failure much harder to localize -- a real trade, not an
-  # oversight. Do it before adding the next batch of rules: at ~7 minutes this is already at the edge
-  # of where people start skipping it locally, which is how gates rot.
+  # The batching trade that was feared and did NOT materialise: every row still gets its own named
+  # PASS/FAIL line, because attribution is by DIRECTORY rather than by invocation. The 50 Gate 5
+  # verdict lines were diffed before and after the rewrite and are identical.
 
   # ---- Gate 1: every rule is exercised by a passing fixture. -------------------------------
   # This is the gate that matters most, because `semgrep test` EXITS 0 when it finds no fixtures
@@ -393,22 +393,6 @@ ls=sorted(r["start"]["line"] for r in (d.get("results") or []))
 p=d.get("paths") or {}
 print("%s|%d|%d" % (" ".join(str(x) for x in ls), len(p.get("scanned") or []), len(d.get("errors") or [])))
 '; }
-  # $1=baseline line set, $2=scan_lines output, $3=expected delta (one|same) -> "OK" or a reason.
-  mut_verdict(){
-    BASE="$1" GOT="$2" WANT="$3" python3 -c '
-import os
-base=set(os.environ["BASE"].split())
-lines,scanned,errors=os.environ["GOT"].split("|")
-want=os.environ["WANT"]
-mut=set(lines.split())
-if int(scanned)==0: print("fixture was NOT scanned -- broken target, not a removed defect"); raise SystemExit
-if int(errors)>0: print("semgrep reported %s error(s) -- tooling failure, not a removed defect" % errors); raise SystemExit
-removed=sorted(base-mut); added=sorted(mut-base)
-if added: print("mutation ADDED finding(s) at line(s) %s" % added); raise SystemExit
-if want=="one" and len(removed)!=1: print("expected exactly 1 finding removed, got %d %s" % (len(removed),removed)); raise SystemExit
-if want=="same" and removed: print("value-only mutation removed finding(s) at %s -- rule keys on the value, not the defect" % removed); raise SystemExit
-print("OK")
-'; }
   # rule<TAB>old<TAB>new. Each row must neutralize EXACTLY ONE finding. A new rule in 3d adds its
   # rows here; the coverage check below fails if it does not.
   TAB=$(printf '\t')
@@ -480,68 +464,88 @@ ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_S
       END{ if(!done) exit 3 }
     ' "$1" > "$2"
   }
-  run_mut_table(){ # $1=table $2=want(one|same) $3=label
-    # BASELINE MEMO. The baseline scan is of the UNCHANGED fixture, so it is identical for every row
-    # of the same rule -- and rows are grouped by rule. Re-scanning it per row doubled the gate's
-    # runtime for nothing (~6s per `semgrep scan`, dominated by process startup). Memoizing the
-    # previous rule's baseline is enough because of that grouping; it is deliberately NOT a general
-    # cache, so a table that interleaves rules still gets a correct (just slower) result. Safe inside
-    # the `while` subshell: assignments in the loop body persist across iterations of the same pipe.
-    memo_rule=""; memo_base=""
+  # ---- Gate 5, batched. ONE `semgrep scan` for every baseline, mutant and negative control. -----
+  # Why: a `semgrep scan` costs ~4.8s wall but only ~1.25s user -- ~95% is process startup, not
+  # analysis. So the fix is FEWER invocations, not faster ones. Previously each row got its own scan
+  # (plus a memoized baseline per rule); now every fixture variant is staged into its own sibling
+  # directory under one tree and scanned together, with findings attributed back by `result.path`.
+  # Measured on this tree: 60 staged directories analysed in a single 4.8s scan.
+  #
+  # Correctness of the batch was verified, not assumed, before the rewrite landed:
+  #   * Scanning all 10 rules against all 10 fixtures at once reproduces the per-rule line sets
+  #     EXACTLY (47 findings, same 10 line lists) -- no cross-rule contamination, because a rule
+  #     only matches a fixture whose language it claims and whose defect it targets.
+  #   * A broken fixture in one directory does NOT poison its siblings: they still report their
+  #     full line sets, and the error carries the offending path so it can be attributed.
+  #
+  # WHY THE GUARDS BELOW CANNOT BE MUTATION-TESTED THE USUAL WAY, measured: disabling any of them on
+  # a HEALTHY tree changes nothing -- 123 passed / 0 failed either way -- because each one only fires
+  # on a defect that is not present. Mutating the gate and re-running the suite therefore reports
+  # "survivor" for a guard that is in fact load-bearing. The honest test is PAIRED: plant the defect,
+  # confirm the catch, then disable the guard and confirm the catch DISAPPEARS. Verdicts recorded
+  # per guard below. Two mutations DO show up on a healthy tree, and they are the two that break
+  # batching mechanics rather than a guard: collapsing path attribution (59 failures) and silencing
+  # the no-JSON tooling-failure path (59 failures).
+  #
+  # Sibling directories, not a filename prefix, because attribution keys on the DIRECTORY name:
+  # fixtures keep their real basename (and therefore their extension, which is what makes semgrep
+  # claim the file at all).
+  stage_baselines(){ # one unmutated copy per rule -> the line set every mutant is compared against
+    for y in "$RULES"/*.yaml; do
+      rule=$(basename "$y" .yaml)
+      fx=$(find "$RULES" -maxdepth 1 -name "$rule.*" ! -name '*.yaml' | head -1)
+      if [ -z "$fx" ]; then echo "  [FAIL] gate5: no fixture for rule $rule"; continue; fi
+      mkdir -p "$TREE/base__$rule"; cp "$fx" "$TREE/base__$rule/"
+      printf 'base__%s\tbase\t%s\t-\tgate5\tbaseline\n' "$rule" "$rule" >> "$MANIFEST"
+    done
+  }
+  stage_muts(){ # $1=table $2=want(one|same) $3=label
+    n=0
     printf '%s\n' "$1" | while IFS="$TAB" read -r rule old new; do
       [ -n "$rule" ] || continue
+      n=$((n+1))
       y="$RULES/$rule.yaml"
       fx=$(find "$RULES" -maxdepth 1 -name "$rule.*" ! -name '*.yaml' | head -1)
       if [ ! -f "$y" ] || [ -z "$fx" ]; then
         echo "  [FAIL] $3: no rule+fixture pair for $rule"; continue
       fi
-      # Baseline must find the defect, AND must have genuinely parsed the fixture. A fixture whose
-      # extension the rule's `languages` never claims reports findings:0 scanned:0 errors:0
-      # (measured) -- the likeliest slip when adding rules in bulk.
-      # HONESTY NOTE: deleting this scanned check does NOT make the suite pass -- the
-      # "baseline found NOTHING" check below still fails. It is kept for the DIAGNOSTIC (it names
-      # the real cause instead of sending you hunting through a working rule), not as a guard.
-      # The `errors` check inside mut_verdict, by contrast, IS load-bearing: without it a
-      # syntactically broken fixture passes as a legitimately removed defect (measured).
-      if [ "$rule" = "$memo_rule" ]; then base="$memo_base"
-      else base=$(scan_lines "$y" "$fx"); memo_rule="$rule"; memo_base="$base"; fi
-      base_scanned=$(printf '%s' "$base" | cut -d'|' -f2)
-      base_errors=$(printf '%s' "$base" | cut -d'|' -f3)
-      if [ "$base_scanned" = "0" ]; then
-        echo "  [FAIL] $3 $rule: fixture $(basename "$fx") was NOT scanned -- extension not claimed by the rule's \`languages\`?"
-        rm -rf "$W" 2>/dev/null; continue
+      d="$TREE/${3}__${n}"; mkdir -p "$d"
+      # NO-OP DETECTION, and it must stay in the STAGING step where the fixture text is still in
+      # hand. A row whose `old` string is absent from the fixture mutates nothing, so the scan sees
+      # a pristine fixture and "no findings removed" -- which is precisely what a NEGATIVE CONTROL
+      # asserts. Measured: with this check disabled, a no-op row planted in NCS passes vacuously
+      # (50 pass / 0 fail instead of 49/1). Load-bearing for the NC table; for the `one` rows it is
+      # a better diagnostic than the "expected 1 removed, got 0" that would otherwise fire.
+      if ! apply_mut "$fx" "$d/$(basename "$fx")" "$old" "$new"; then
+        echo "  [FAIL] $3: $rule '$old' -> '$new' (mutation was a NO-OP -- '$old' not in fixture, proves nothing)"
+        rm -rf "$d"; continue
       fi
-      if [ "$base_errors" != "0" ]; then
-        echo "  [FAIL] $3 $rule: baseline scan reported $base_errors error(s) -- fix the rule/fixture first"; continue
-      fi
-      case "$base" in
-        "|"*) echo "  [FAIL] $3 $rule: baseline found NOTHING -- cannot assess"; continue ;;
-      esac
-      W=$(mktemp -d "${TMPDIR:-/tmp}/sgm.XXXXXX")
-      if ! apply_mut "$fx" "$W/$(basename "$fx")" "$old" "$new"; then
-        echo "  [FAIL] $3 $rule: mutation was a NO-OP ('$old' not in fixture) -- proves nothing"
-        rm -rf "$W"; continue
-      fi
-      v=$(mut_verdict "${base%%|*}" "$(scan_lines "$y" "$W/$(basename "$fx")")" "$2")
-      if [ "$v" = "OK" ]; then echo "  [PASS] $3: $rule '$old' -> '$new'"
-      else echo "  [FAIL] $3: $rule '$old' -> '$new' ($v)"; fi
-      rm -rf "$W"
+      printf '%s__%s\tmut\t%s\t%s\t%s\t%s\n' "$3" "$n" "$rule" "$2" "$3" "'$old' -> '$new'" >> "$MANIFEST"
     done
   }
-  # The `find | while` subshell problem again: run_mut_table cannot update pass/fail directly, so
-  # its PASS/FAIL lines are counted from its output here.
-  mut_out=$(run_mut_table "$MUTS" one "gate5"; run_mut_table "$NCS" same "gate5-nc")
-  printf '%s\n' "$mut_out"
-  mp=$(printf '%s\n' "$mut_out" | grep -c '\[PASS\]'); mf=$(printf '%s\n' "$mut_out" | grep -c '\[FAIL\]')
-  pass=$((pass+mp)); fail=$((fail+mf))
+  # gate5-self: Gate 5 must itself be provably alive. A rule that matches the FILE rather than the
+  # defect (`languages` + a bare `pattern: localStorage.setItem(...)`) survives every key mutation.
+  # It is staged into the SAME tree and judged by the SAME code path as every other row -- on
+  # purpose. Run as a separate scan it could keep passing while the batched path was broken, i.e.
+  # the optimization would silently disable the check that proves the optimization safe.
+  stage_self(){
+    fx=$(find "$RULES" -maxdepth 1 -name 'ts-token-in-localstorage.*' ! -name '*.yaml' | head -1)
+    mkdir -p "$TREE/base__taut" "$TREE/gate5-self__1"
+    cp "$fx" "$TREE/base__taut/f.ts"
+    if ! apply_mut "$fx" "$TREE/gate5-self__1/f.ts" '"access_token"' '"theme"'; then
+      echo "  [FAIL] gate5-self: staging mutation was a NO-OP -- cannot assess"; return
+    fi
+    printf 'base__taut\tbase\ttaut\t-\tgate5-self\tbaseline\n' >> "$MANIFEST"
+    printf 'gate5-self__1\tmut\ttaut\tinvert\tgate5-self\ta file-matching (tautological) rule is caught\n' >> "$MANIFEST"
+  }
 
-  # Gate 5 must itself be provably alive: a rule that matches the FILE rather than the defect
-  # (`languages` + a bare `pattern: localStorage.$F(...)`) survives every key mutation. If this
-  # does not get caught, the loop above is decorative.
-  W=$(mktemp -d "${TMPDIR:-/tmp}/sgm.XXXXXX")
-  fx=$(find "$RULES" -maxdepth 1 -name 'ts-token-in-localstorage.*' ! -name '*.yaml' | head -1)
-  cp "$fx" "$W/f.ts"
-  cat > "$W/taut.yaml" <<'YAML'
+  BATCH=$(mktemp -d "${TMPDIR:-/tmp}/sgb.XXXXXX")
+  TREE="$BATCH/tree"; MANIFEST="$BATCH/manifest.tsv"
+  mkdir -p "$TREE"; : > "$MANIFEST"
+  # The tautological rule for gate5-self. Kept OUTSIDE $TREE would be tidier, but it is harmless
+  # here: verified that semgrep does not scan a .yaml sitting in the scan root (paths.scanned holds
+  # no .yaml), so it cannot become a target of its own rules.
+  cat > "$BATCH/taut.yaml" <<'YAML'
 rules:
   - id: taut
     languages: [js, ts]
@@ -549,11 +553,123 @@ rules:
     message: matches any storage call at all -- deliberately tautological
     pattern: localStorage.setItem(...)
 YAML
-  tb=$(scan_lines "$W/taut.yaml" "$W/f.ts")
-  apply_mut "$W/f.ts" "$W/g.ts" '"access_token"' '"theme"'
-  tv=$(mut_verdict "${tb%%|*}" "$(scan_lines "$W/taut.yaml" "$W/g.ts")" one)
-  chk "$([ "$tv" = "OK" ] && echo OK || echo caught)" "caught" "gate5-self: a file-matching (tautological) rule is caught ($tv)"
-  rm -rf "$W"
+  # Staging writes the manifest; the `find | while` subshell problem means it cannot bump pass/fail
+  # itself, so its FAIL lines are folded into the same output that the reporter below produces.
+  stage_out=$(stage_baselines; stage_self; stage_muts "$MUTS" one gate5; stage_muts "$NCS" same gate5-nc)
+
+  # ONE scan. Two --config flags compose (verified): the rules dir plus the tautological rule.
+  semgrep scan --config "$RULES" --config "$BATCH/taut.yaml" \
+    --metrics=off --disable-version-check --json "$TREE" > "$BATCH/scan.json" 2>/dev/null
+
+  report_batch(){
+    [ -n "$stage_out" ] && printf '%s\n' "$stage_out"
+    SCAN="$BATCH/scan.json" MANIFEST="$MANIFEST" python3 -c '
+import json,os,sys,collections
+try:
+    raw=open(os.environ["SCAN"]).read()
+    d=json.loads(raw) if raw.strip() else None
+except Exception:
+    d=None
+if d is None:
+    # Empty stdout is meaningful, not an error to swallow: on a broken config `semgrep scan --json`
+    # prints nothing. Reported as a tooling failure so it can never read as "every mutant passed".
+    print("  [FAIL] gate5: batched scan produced no parseable JSON -- tooling failure, not a result")
+    sys.exit(0)
+
+def dirof(p): return os.path.basename(os.path.dirname(p))
+
+found=collections.defaultdict(set)
+for r in (d.get("results") or []):
+    found[(dirof(r["path"]), r["check_id"].split(".")[-1])].add(r["start"]["line"])
+scanned=collections.Counter(dirof(p) for p in ((d.get("paths") or {}).get("scanned") or []))
+# Errors arrive as ONE pooled list for the whole batch, so they must be attributed by path or a
+# single broken fixture would fail all 55 rows. `path` is not always set -- a PartialParsing error
+# carries its file in `spans[].path` -- so both are read, and anything attributable to no fixture
+# at all is reported separately rather than dropped.
+errs=collections.defaultdict(list); unattributed=[]
+for e in (d.get("errors") or []):
+    paths=set()
+    if e.get("path"): paths.add(dirof(e["path"]))
+    for sp in (e.get("spans") or []):
+        if sp.get("path"): paths.add(dirof(sp["path"]))
+    if paths:
+        for p in paths: errs[p].append(e.get("message","(no message)"))
+    else: unattributed.append(e.get("message","(no message)"))
+
+rows=[l.rstrip("\n").split("\t") for l in open(os.environ["MANIFEST"]) if l.strip()]
+
+base={}
+for dirn,kind,rule,want,label,desc in rows:
+    if kind!="base": continue
+    # A fixture whose extension the rule never claims reports findings:0 scanned:0 errors:0
+    # (measured) -- the likeliest slip when adding rules in bulk.
+    # HONESTY NOTE: deleting this scanned check does NOT make the suite pass -- the "baseline found
+    # NOTHING" check below still fails. Kept for the DIAGNOSTIC (it names the real cause instead of
+    # sending you hunting through a working rule), not as a guard.
+    if scanned.get(dirn,0)==0:
+        print("  [FAIL] %s %s: baseline fixture was NOT scanned -- extension not claimed by `languages` in the rule?" % (label,rule)); continue
+    if errs.get(dirn):
+        print("  [FAIL] %s %s: baseline scan reported %d error(s) -- fix the rule/fixture first" % (label,rule,len(errs[dirn]))); continue
+    lines=found.get((dirn,rule),set())
+    # Also diagnostic rather than load-bearing, and measured the same paired way: delete a baseline
+    # fixture outright and the gate reports 8 failures with this check either enabled or disabled --
+    # the `scanned` check above gets there first. The pair is kept because between them they name
+    # the cause, and which one fires tells you whether the file is missing or merely unclaimed.
+    if not lines:
+        print("  [FAIL] %s %s: baseline found NOTHING -- cannot assess" % (label,rule)); continue
+    base[rule]=lines
+
+for m in unattributed:
+    print("  [FAIL] gate5: batched scan reported an error not attributable to any fixture: %s" % m[:200])
+
+def verdict(dirn,rule,want):
+    """None when the mutation behaved as required, else the reason it did not."""
+    if rule not in base: return "no usable baseline"
+    # Diagnostic, not a guard: measured, the line-set check below catches an unscanned mutant
+    # anyway ("expected exactly 1 finding removed, got 6"). This just names the real cause.
+    if scanned.get(dirn,0)==0: return "fixture was NOT scanned -- broken target, not a removed defect"
+    # LOAD-BEARING, and measured on the shipped gate by the paired test: plant an unparseable fixture
+    # in one mutant directory and Gate 5 reports 1 failure with this check enabled and 0 with it
+    # disabled. The broken fixture reports 0 findings, which without this reads as a legitimately
+    # removed defect. Deleting this line does not fail any test on a healthy tree -- that is exactly
+    # why the paired test exists, and why this comment is here instead of a naive mutation row.
+    if errs.get(dirn): return "semgrep reported %d error(s) -- tooling failure, not a removed defect" % len(errs[dirn])
+    mut=found.get((dirn,rule),set()); b=base[rule]
+    removed=sorted(b-mut); added=sorted(mut-b)
+    # The exit code is not a signal here (a fixture holds MANY findings, so neutralizing one leaves
+    # the rest and `--error` still exits 1), which is why the assertion is on the LINE SET.
+    if added: return "mutation ADDED finding(s) at line(s) %s" % added
+    if want in ("one","invert") and len(removed)!=1: return "expected exactly 1 finding removed, got %d %s" % (len(removed),removed)
+    # LOAD-BEARING, measured: swap a negative-control row for a real defect removal and this is the
+    # ONLY check that notices (1 gate5 failure with it, 0 without). Without it the NCS table is
+    # decorative -- it would assert nothing about whether the rule keys on the value or the defect.
+    if want=="same" and removed: return "value-only mutation removed finding(s) at %s -- rule keys on the value, not the defect" % removed
+    return None
+
+for dirn,kind,rule,want,label,desc in rows:
+    if kind!="mut": continue
+    tag="%s: %s %s" % (label,rule,desc)
+    v=verdict(dirn,rule,want)
+    if want=="invert":
+        # INVERTED ON PURPOSE. This row is a rule that SHOULD be judged bad, so a clean verdict is
+        # the failure: it means Gate 5 accepted a tautological rule and the whole loop is
+        # decorative. Do not "fix" this to match the others.
+        # LOAD-BEARING, measured by the paired test: rewrite the taut.yaml pattern to key on the KEY
+        # rather than the call (making its subject genuinely non-tautological) and this reports 1
+        # failure with the inversion in place, 0 with it removed.
+        # NOTE for editors: this whole reporter is inside a single-quoted `python3 -c` block, so an
+        # apostrophe anywhere in these comments terminates the shell string and breaks the script.
+        if v is None: print("  [FAIL] %s (gate accepted a tautological rule -- gate5 is decorative)" % tag)
+        else: print("  [PASS] %s (%s)" % (tag,v))
+        continue
+    if v is None: print("  [PASS] %s" % tag)
+    else: print("  [FAIL] %s (%s)" % (tag,v))
+'; }
+  mut_out=$(report_batch)
+  printf '%s\n' "$mut_out"
+  mp=$(printf '%s\n' "$mut_out" | grep -c '\[PASS\]'); mf=$(printf '%s\n' "$mut_out" | grep -c '\[FAIL\]')
+  pass=$((pass+mp)); fail=$((fail+mf))
+  rm -rf "$BATCH"
 
   # ---- Gate 6: the `.semgrepignore` silent zero. --------------------------------------------
   # semgrep's BUNDLED ignore list excludes `tests/`. It says so only on stderr: the JSON
