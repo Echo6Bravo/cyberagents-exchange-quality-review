@@ -353,6 +353,26 @@ print(sum(len(v.get("checks") or {}) for v in (d.get("results") or {}).values())
   done
   chk "${dangling:-none}" "none" "gate2d: rule ids cited in SKILL.md exist (dangling:${dangling:-none})"
 
+  # ---- Gate 2e: every helper script SKILL.md cites resolves to a real file. -----------------
+  # Same defect class as gate2d, different noun: the prose tells reviewers to RUN these, so a
+  # renamed or deleted script turns a run-directive into a dead end -- worse than a dangling
+  # rule id, because the reviewer is mid-review when it fails. Cheap to check and there was no
+  # check at all until a dimension-18 edit added a third `pinned-vuln-scan.py` citation.
+  # `validator.py` is deliberately EXCLUDED: it is the Exchange's own validator, cited as
+  # something the reviewer runs against the *listing*, and it correctly does not live here.
+  # That exclusion is why this greps for a `scripts/` prefix rather than any bare *.py.
+  # KNOWN BLIND SPOT, and it is the price of that exclusion: a citation written WITHOUT the
+  # prefix is not checked. Two exist today (`mutation-check.sh`, `pinned-vuln-scan.py`) and both
+  # resolve, but a rename would not be caught through those spellings. Widening to bare names is
+  # not the fix -- it would demand `validator.py` in this repo, which would be wrong. Cite
+  # helper scripts with the `scripts/` prefix and the gate covers them.
+  missing_scripts=""
+  for sp in $(grep -oE '`scripts/[a-z0-9_-]+\.(sh|py)`' SKILL.md | tr -d '`' | sort -u); do
+    [ -f "$sp" ] || missing_scripts="$missing_scripts $sp"
+  done
+  chk "${missing_scripts:-none}" "none" \
+      "gate2e: helper scripts cited in SKILL.md exist (missing:${missing_scripts:-none})"
+
   # ---- Gate 3: the config is valid. --------------------------------------------------------
   # MUST grep the OUTPUT TEXT. `semgrep validate` exits 0 even when it reports
   # "Configuration is invalid" (measured). Do NOT "simplify" this to chk $? 0 -- that silently

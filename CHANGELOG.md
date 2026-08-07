@@ -7,6 +7,45 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Coverage for the OWASP GenAI/LLM and Agentic risk lists, which had never been walked.** The OWASP
+  audit behind the current dimensions covered the **web-application** Top 10 only — yet the LLM/AI
+  dimensions exist precisely because most Exchange listings are LLM agents with live tool access, so the
+  most relevant lists were the unexamined ones. Walking the live **GenAI LLM Top 10 2026** (published
+  2026-08-04, three days before this pass) and the draft **Top 10 for Agentic Applications** found 13 of
+  20 categories already covered — several better than the web list was — and these real gaps, all closed
+  as **prose in existing dimensions; no new rules and no new dimensions**:
+  - **Hidden context exposure** (dim 13) — the *inverse* of injection, and the existing rules are blind
+    to it by construction. The finding is not "the prompt can leak": assume it is discoverable. It is a
+    **secret in the context** (credentials in a system prompt or tool description) or **a control that
+    depends on secrecy** — authorization or content filtering enforced by prompt text is enforced by
+    nothing, the dimension-17 "enforced control" bar applied to secrecy instead of authority. Lands
+    hardest on MCP servers, which assemble tool schemas into the context by design.
+  - **Agent memory and inter-agent messages** (dim 13) — two sinks the single-turn payload probe cannot
+    reach. Anything the agent writes and reads back is **attacker-influenceable input on read-back**, by
+    the same argument that makes a resource name untrusted; the probe needs a *second session* to show it.
+    A message from another agent is not trusted merely because the sender is an agent.
+  - **Human-approval integrity** (dim 17) — a control the design satisfies and the workflow defeats.
+    Does the request show what is being approved, or a gloss written by the agent about to act on the
+    answer? Can approval fatigue make it a rubber stamp? Can it be bypassed by delegation, a timing gap,
+    or default-approve on timeout — which is dimension 3's fail-open defect in an authorization costume?
+  - **Model and dataset provenance** (dim 18) — a model pulled by moving tag, or a prompt/tool manifest
+    fetched from a remote endpoint, is an unpinned dependency in a registry nobody thinks to check; the
+    last is also dimension 13's injection sink. `pinned-vuln-scan.py` reads package manifests and covers
+    **none** of it, so a clean run says nothing.
+  - **Two areas ruled OUT of scope, stated rather than left implied**: retrieval/vector internals (not
+    assessed unless a listing ships an index — poisoned *content* is still covered by dim 13) and
+    training-time model poisoning (these listings consume models, they do not train them).
+  **Category names, never numbers**, and this pass produced fresh evidence for that rule: `Excessive
+  Agency` moved LLM08 → LLM03 and `Insecure Output Handling` LLM02 → LLM10, and the OWASP draft itself
+  contains a stale `LLM06:2025 Excessive Agency` citation. The agentic list is a **first public draft**
+  whose expanded files are still unfilled templates — real content lives only in the superseded 0.5
+  candidates — so no ASI ids are cited anywhere and nothing is gated against it.
+- **`gate2e`** (suite 171 → **172**): every helper script `SKILL.md` cites must exist. Same defect class
+  as `gate2d` with a worse consequence — the prose tells reviewers to *run* these, so a stale citation
+  fails mid-review. There was no check at all until a dimension-18 edit added a third
+  `pinned-vuln-scan.py` citation. **Proven by breaking it**: renaming `tautology-scan.sh` made it fail
+  naming the exact path. It requires the `scripts/` prefix, which is what excludes the Exchange's own
+  `validator.py` (correctly not in this repo) and is also its documented blind spot.
 - **OWASP 2025 mapping as per-rule metadata plus a pointer, deliberately not as a coverage table.** All
   15 rules now carry an `owasp:` key; the two dimension-11 test-hygiene rules state
   `no applicable category -- ...` explicitly, matching the idiom their `cwe:` field already used, because
