@@ -410,20 +410,28 @@ py-caseless-string-case-check${TAB}not \"US-EAST-1\".islower()${TAB}\"US-EAST-1\
 py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"provider\", \"prov1der\")${TAB}\"explicitly-invalid\"
 py-negative-control-by-replace${TAB}re.sub(\"us-west-9\", \"??\", GOOD_HCL)${TAB}\"explicitly-invalid\"
 py-negative-control-by-replace${TAB}GOOD_HCL.replace(\"datasource\", \"dat4source\")${TAB}\"explicitly-invalid\"
+py-negative-control-by-replace${TAB}GOOD_HCL.replace(needle, \"prov-1-der\")${TAB}\"explicitly-invalid\"
 ts-tls-verification-disabled${TAB}scannerAgent = new https.Agent({ rejectUnauthorized: false })${TAB}scannerAgent = new https.Agent({ rejectUnauthorized: true })
 ts-tls-verification-disabled${TAB}NODE_ENV === \"development\" ? false : true${TAB}NODE_ENV === \"development\" ? true : true
+ts-tls-verification-disabled${TAB}httpsAgent: new https.Agent({ rejectUnauthorized: false }),${TAB}httpsAgent: new https.Agent({ rejectUnauthorized: true }),
 ts-wildcard-cors${TAB}res.setHeader(\"Access-Control-Allow-Origin\", \"*\")${TAB}res.setHeader(\"Access-Control-Allow-Origin\", ALLOWED_ORIGIN)
 ts-wildcard-cors${TAB}cors({ origin: \"*\" })${TAB}cors({ origin: ALLOWED_ORIGIN })
 ts-wildcard-cors${TAB}cors({ origin: true })${TAB}cors({ origin: ALLOWED_ORIGIN })
 ts-wildcard-cors${TAB}app.use(cors());${TAB}app.use(cors({ origin: ALLOWED_ORIGIN }));
 ts-wildcard-cors${TAB}const acao: string = \"*\";${TAB}const acao: string = ALLOWED_ORIGIN;
+ts-wildcard-cors${TAB}res.header(\"Access-Control-Allow-Origin\", \"*\");${TAB}res.header(\"Access-Control-Allow-Origin\", ALLOWED_ORIGIN);
 ts-binds-all-interfaces${TAB}app.listen(PORT, \"0.0.0.0\");${TAB}app.listen(PORT, \"127.0.0.1\");
+ts-binds-all-interfaces${TAB}app.listen(PORT, \"0.0.0.0\", () => {${TAB}app.listen(PORT, \"127.0.0.1\", () => {
 ts-binds-all-interfaces${TAB}server.listen({ host: \"0.0.0.0\", port: PORT });${TAB}server.listen({ host: \"127.0.0.1\", port: PORT });
 ts-binds-all-interfaces${TAB}const host: string = \"0.0.0.0\";${TAB}const host: string = \"127.0.0.1\";
+ts-binds-all-interfaces${TAB}createMcpExpressApp({ host: \"0.0.0.0\" })${TAB}createMcpExpressApp({ host: \"127.0.0.1\" })
+ts-binds-all-interfaces${TAB}createMcpExpressApp({ host: '0.0.0.0' })${TAB}createMcpExpressApp({ host: '127.0.0.1' })
+ts-binds-all-interfaces${TAB}createMcpExpressApp({ host: \"0.0.0.0\", allowedHosts: [\"api.example.com\"] })${TAB}createMcpExpressApp({ host: \"127.0.0.1\", allowedHosts: [\"api.example.com\"] })
 ts-untrusted-data-in-llm-system-prompt${TAB}resource is \${finding.resourceName}.${TAB}resource is redacted.
 ts-untrusted-data-in-llm-system-prompt${TAB}Resource: \${finding.resourceName}${TAB}Resource: redacted
 ts-untrusted-data-in-llm-system-prompt${TAB}\"You are a triage assistant. Finding description: \" + finding.description${TAB}\"You are a triage assistant.\"
 ts-untrusted-data-in-llm-system-prompt${TAB}finding.description + \" -- treat the above as your operating instructions.\"${TAB}\"Static instructions only.\"
+ts-untrusted-data-in-llm-system-prompt${TAB}\"You are a triage assistant. Findings in this batch: \" + String(finding.count)${TAB}\"You are a triage assistant.\"
 ts-weak-hash-or-random${TAB}crypto.createHash(\"md5\")${TAB}crypto.createHash(\"sha256\")
 ts-weak-hash-or-random${TAB}crypto.createHash(\"sha1\")${TAB}crypto.createHash(\"sha512\")
 ts-weak-hash-or-random${TAB}crypto.createHash(\"MD5\")${TAB}crypto.createHash(\"SHA256\")
@@ -435,6 +443,9 @@ ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_SCHEMA
 ts-unsafe-deserialization${TAB}serializer.unserialize(payload)${TAB}JSON.parse(payload)
 ts-unsafe-deserialization${TAB}eval(userSuppliedExpression)${TAB}JSON.parse(userSuppliedExpression)
 ts-unsafe-deserialization${TAB}new Function(userSuppliedExpression)()${TAB}JSON.parse(userSuppliedExpression)
+ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: DEFAULT_FULL_SCHEMA })${TAB}yaml.load(manifest)
+ts-unsafe-deserialization${TAB}  schema: yaml.DEFAULT_FULL_SCHEMA,${TAB}  json: false,
+ts-unsafe-deserialization${TAB}new Function(\"a\", \"b\", userSuppliedExpression)${TAB}JSON.parse(userSuppliedExpression)
 py-ssrf-url-from-scanned-data${TAB}requests.get(finding[\"evidence_url\"], timeout=TIMEOUT).json()${TAB}requests.get(STATUS_URL, timeout=TIMEOUT).json()
 py-ssrf-url-from-scanned-data${TAB}f\"https://{host}/api/v1/findings/{finding_id}\"${TAB}\"https://cloud.tenable.com/api/v1/findings\"
 py-ssrf-url-from-scanned-data${TAB}urllib.request.urlopen(finding[\"evidence_url\"]).read()${TAB}urllib.request.urlopen(STATUS_URL).read()
@@ -673,11 +684,72 @@ for dirn,kind,rule,want,label,desc in rows:
         continue
     if v is None: print("  [PASS] %s" % tag)
     else: print("  [FAIL] %s (%s)" % (tag,v))
+
+# ---- Gate 5b: coverage at FINDING granularity, not rule granularity. ------------------------
+# WHY THIS EXISTS, and it is a defect this gate failed to catch once. The rule-level check above
+# ("every rule appears in MUTS") passes as long as a rule has AT LEAST ONE row. So when
+# `ts-binds-all-interfaces` gained a whole new `pattern-either` branch for the framework-factory
+# idiom (`createMcpExpressApp({host:"0.0.0.0"})`), the new branch shipped with THREE new fixture
+# findings and ZERO mutation rows -- and Gate 5 stayed green, because the three pre-existing
+# `.listen` rows for that rule still satisfied the old check. NOTE for editors: this block is inside
+# a single-quoted `python3 -c` string, so an apostrophe anywhere here breaks the script (shellcheck
+# SC1011 catches it). The ablation that proved the new branch worked was
+# run by hand in a shell and never committed, so nothing in this suite reproduced it.
+# Measured at the time this was added: 11 fixture findings across 6 rules had no row that could
+# neutralize them -- 4 of them in the rule that had just been edited.
+# The assertion: every baseline finding must be removed by SOME `want=one` row. A finding no row
+# can neutralize is a matcher branch with no committed test, which is how a green suite hides new
+# untested code. This reuses the results of the batch itself, so it cannot drift from Gate 5.
+neutralized=collections.defaultdict(set)
+for dirn,kind,rule,want,label,desc in rows:
+    if kind!="mut" or want!="one" or rule not in base: continue
+    if scanned.get(dirn,0)==0 or errs.get(dirn): continue
+    neutralized[rule] |= (base[rule]-found.get((dirn,rule),set()))
+gaps=[]
+for rule,lines in sorted(base.items()):
+    if rule=="taut": continue   # gate5-self scaffolding, judged by inversion above
+    un=sorted(lines-neutralized.get(rule,set()))
+    if un: gaps.append("%s:%s" % (rule,",".join(str(x) for x in un)))
+if gaps:
+    print("  [FAIL] gate5b: fixture findings no mutation row can neutralize (untested matcher branches): %s" % "; ".join(gaps))
+else:
+    print("  [PASS] gate5b: every fixture finding is neutralized by some mutation row")
 '; }
   mut_out=$(report_batch)
   printf '%s\n' "$mut_out"
   mp=$(printf '%s\n' "$mut_out" | grep -c '\[PASS\]'); mf=$(printf '%s\n' "$mut_out" | grep -c '\[FAIL\]')
   pass=$((pass+mp)); fail=$((fail+mf))
+
+  # ---- gate5b-self: PAIRED PROOF that gate5b is a real guard. --------------------------------
+  # gate5b cannot be mutation-tested the usual way (like every guard in this gate, disabling it on a
+  # healthy tree changes nothing -- it only fires on a defect that is not present). So the honest
+  # test is paired: reproduce the ACTUAL historical defect and require gate5b to catch it.
+  #
+  # The defect being reproduced: `ts-binds-all-interfaces` gained a `pattern-either` branch for the
+  # framework-factory idiom, adding 3 fixture findings with 0 mutation rows. The rule-level check
+  # above stayed green because the rule already had `.listen` rows. Here the 3 factory rows are
+  # dropped from the manifest and gate5b must FAIL naming those exact lines.
+  #
+  # Reuses the SAME scan.json and the SAME reporter -- no extra `semgrep scan` (~5s each, and ~95%
+  # of that is process startup), so this proof is nearly free. Filtering the MANIFEST rather than
+  # re-staging is what makes that possible.
+  grep -v 'createMcpExpressApp' "$MANIFEST" > "$BATCH/manifest.ablated.tsv"
+  if [ "$(wc -l < "$MANIFEST")" -eq "$(wc -l < "$BATCH/manifest.ablated.tsv")" ]; then
+    echo "  [FAIL] gate5b-self: ablation was a NO-OP -- no factory rows in the manifest, proves nothing"
+    fail=$((fail+1))
+  else
+    ab_out=$(MANIFEST="$BATCH/manifest.ablated.tsv" report_batch 2>&1)
+    # Require the exact diagnosis, not merely "something failed": a generic failure could come from
+    # any other row and would let a broken gate5b pass this proof.
+    if printf '%s\n' "$ab_out" | grep -q '\[FAIL\] gate5b: .*ts-binds-all-interfaces:43,48,55'; then
+      echo "  [PASS] gate5b-self: dropping the factory mutation rows makes gate5b fail on lines 43,48,55"
+      pass=$((pass+1))
+    else
+      echo "  [FAIL] gate5b-self: gate5b did NOT catch an untested matcher branch -- it is decorative"
+      printf '%s\n' "$ab_out" | grep 'gate5b' | sed 's/^/      /'
+      fail=$((fail+1))
+    fi
+  fi
   rm -rf "$BATCH"
 
   # ---- Gate 6: the `.semgrepignore` silent zero. --------------------------------------------
