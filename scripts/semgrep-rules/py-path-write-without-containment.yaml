@@ -52,6 +52,13 @@ rules:
       # Writes to a hardcoded filename carry no traversal risk from input data. Both the
       # `Path(...) / "literal"` and `$DIR / "literal"` spellings are excluded; each was measured
       # to be load-bearing (removing them reintroduces the finding on the g4 near-miss below).
+      #
+      # These exclusions are interpolation-sensitive, which is the sensitivity you want, and it was
+      # measured rather than assumed: `f"remediate-{name}.tf"` still FIRES (the `"..."` metavariable
+      # does not match an interpolating f-string), while a static `f"manifest.json"` is excluded like
+      # a plain literal. So converting a percent-format filename in the fixture to an f-string does
+      # not silently disable this rule -- but re-run `semgrep test` after any such edit, because that
+      # is the only thing standing between a formatting cleanup and a dead rule.
       - pattern-not: (Path(...) / "...").write_text(...)
       - pattern-not: (Path(...) / "...").write_bytes(...)
       - pattern-not: ($D / "...").write_text(...)

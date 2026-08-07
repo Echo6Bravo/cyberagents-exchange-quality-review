@@ -34,7 +34,7 @@ def cmd_generate(src, out_dir):
     """VULNERABLE: filename interpolates scanned data, no containment guard."""
     out_dir = Path(out_dir)
     for f in load_findings(src):
-        name = "remediate-%s-%s.tf" % (f["account_id"], f["region"])
+        name = f"remediate-{f['account_id']}-{f['region']}.tf"
         target = out_dir / name
         target.parent.mkdir(parents=True, exist_ok=True)
         # ruleid: py-path-write-without-containment
@@ -45,7 +45,7 @@ def cmd_generate_bytes(src, out_dir):
     """VULNERABLE: same shape, write_bytes shipping the payload instead."""
     out_dir = Path(out_dir)
     for f in load_findings(src):
-        target = out_dir / ("artifact-%s.zip" % f["account_id"])
+        target = out_dir / f"artifact-{f['account_id']}.zip"
         # ruleid: py-path-write-without-containment
         target.write_bytes(VULN_BYTES)
 
@@ -54,7 +54,7 @@ def safe_negative_form(src, out_dir):
     """OK: the guard spelling this rule was originally written against."""
     out_dir = Path(out_dir).resolve()
     for f in load_findings(src):
-        target = (out_dir / ("remediate-%s.tf" % f["account_id"])).resolve()
+        target = (out_dir / f"remediate-{f['account_id']}.tf").resolve()
         if not target.resolve().is_relative_to(out_dir):
             raise ValueError("path escapes out_dir")
         target.write_text("resource {}\n")
