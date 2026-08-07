@@ -46,6 +46,18 @@ expected to keep that bar green.
   annotated lines exactly, so near-misses are enforced true negatives), a documented
   false-positive/blind-spot list in the rule header, and **Gate 5 mutation rows in
   `scripts/test_scripts.sh`** — the coverage check fails the build if a rule has none.
+- **Editing an existing rule needs a row per new *branch*, not per rule.** Gate 5's rule-level check
+  is satisfied by one row, so adding a `pattern-either` branch to a rule that already has rows will
+  ship untested and still go green. This happened once: the framework-factory branch of
+  `ts-binds-all-interfaces` added 3 fixture findings and 0 mutation rows, and the suite passed.
+  **Gate 5b** now asserts at finding granularity — every fixture finding must be neutralized by some
+  row — and `gate5b-self` proves it by reproducing that exact defect. Gate 5 is batched, so extra
+  rows cost almost no wall clock; there is no reason to skip them.
+- **"All gates green" is not "tested" when the gate does not cover what you changed.** Before
+  claiming a matcher change is verified, ask which committed test fails if the change is reverted. An
+  ablation run by hand in a shell is a measurement, not a test — the same distinction this repo
+  already makes for `semgrep validate`. If the answer is "none," the change is untested no matter
+  what the suite prints.
 - **No secrets, ever:** the CI runs `gitleaks` over full history and will fail the build on any
   finding. Never commit a token, key, or real assessment data.
 - **CI must be green.** Don't merge a red pipeline — that's dimension 11 of the skill itself.
