@@ -58,12 +58,35 @@
 # this skill grades under dimension 12, and a reader who trusted it would have hand-audited
 # shared-base multi-stage builds the rule already covers.
 #
-# KNOWN FALSE POSITIVES (both measured on the real corpus; triage by reading):
-#   * a DISCARDED builder stage. Running the build as root is not the deployed risk, and nothing is
-#     shipped from that stage but copied artifacts. Two of the corpus hits are this.
-#   * a `distroless` or `scratch` final stage, which commonly has no shell and a nonroot IMAGE
-#     DEFAULT (`gcr.io/distroless/nodejs:nonroot`). The `USER` line is genuinely unnecessary there,
-#     and the rule cannot read the base image's default uid.
+# MEASURED OUT-OF-TREE on 11 real Dockerfiles from 7 MCP-server repositories (modelcontextprotocol
+# servers + typescript-sdk, github-mcp-server, context7, Figma-Context-MCP, mcp-server-cloudflare,
+# playwright-mcp). Read this before quoting a precision number, because the file-level and
+# finding-level answers are very different and only one of them is good:
+#
+#     files flagged .................. 10 of 11   <- exactly the 10 with no USER anywhere
+#     the 1 file NOT flagged ......... playwright-mcp, the only one that sets USER. Correct silence.
+#     total findings ................. 22
+#     final-stage (deployed) hits .... 10  <- every one verified by reading: all have CMD/ENTRYPOINT
+#     builder-stage hits ............. 12  <- the documented FP below
+#
+# So FILE-level accuracy was 11/11 with zero misses, while FINDING-level precision was **10/22 = 45%**.
+# Both numbers are honest and they answer different questions: "does this image ship as root?" is
+# answered perfectly, "is this specific line the defect?" is answered less than half the time. Report
+# the second one -- a reviewer pasting 22 findings has 12 they must dismiss. Triage is cheap and
+# mechanical: **the last `FROM` in the file is the stage that ships**; earlier hits are builders.
+#
+# KNOWN FALSE POSITIVES (measured on the real corpus; triage by reading):
+#   * a DISCARDED builder stage -- **12 of the 22 corpus hits, the dominant noise class by far.**
+#     Running the build as root is not the deployed risk; nothing ships from that stage but copied
+#     artifacts. Multi-stage is house style on MCP servers (every one of the 10 flagged files is
+#     multi-stage, 2-4 stages each), so expect roughly one FP per extra stage per file.
+#   * a `distroless` or `scratch` final stage MAY be one, but **check the tag before assuming it** --
+#     this was nearly recorded as an FP here and is not. `gcr.io/distroless/base-debian12` (the
+#     github-mcp-server final stage) defaults to **root**; only the explicit `:nonroot` variant
+#     (`gcr.io/distroless/nodejs:nonroot`) drops privilege. The `USER` line is genuinely unnecessary
+#     on the `:nonroot` tags and genuinely MISSING on the plain ones, and the rule cannot read either
+#     image's default uid -- so the base name alone does not settle it. Untagged distroless is a
+#     true positive.
 #
 # KNOWN BLIND SPOT -- SILENT, and the reason it is documented here rather than in a footnote:
 # semgrep claims Dockerfile targets by EXACT filename. `Dockerfile`, `dev.Dockerfile` and anything

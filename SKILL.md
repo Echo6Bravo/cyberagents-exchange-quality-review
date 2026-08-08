@@ -669,15 +669,22 @@ frequently the highest-impact dimensions — not optional add-ons.
     they are this dimension's *other* finding above.
     **Two rules back this dimension where the prose above is otherwise unenforced, and each has a
     silent blind spot worth knowing before you trust a clean run.** `yaml-unpinned-action-ref` flags
-    a `uses:` reference that is not pinned to a full 40-character commit SHA — measured at 112 of 128
-    references across 7 real MCP-server repos, so treat unpinned as the default state rather than an
-    exception, and escalate only where the workflow holds secrets or `write` permissions and the
-    publisher is not well known. Its blind spot is severe: a quoted scalar containing a colon-space
+    a `uses:` reference that is not pinned to a full 40-character commit SHA — measured at **160 of 186
+    references (86%) across 40 workflow files in 7 real MCP-server repos**, so treat unpinned as the
+    default state rather than an exception, and escalate only where the workflow holds secrets or
+    `write` permissions and the publisher is not well known. Precision there was **91%**, and the only
+    false-positive class is a local `uses: ./…` composite action, which has no remote ref to pin.
+    Its blind spot is severe: a quoted scalar containing a colon-space
     anywhere in the file (`run: echo "Result: ok"` — an ordinary line) trips a YAML parse error that
     returns **zero findings for that entire file**, at `warn` level, exit 0, while the report still
     prints `Parsed lines: ~100.0%`. `docker-final-stage-runs-as-root` flags a build stage that never
-    drops privilege, which is the container form of "what authority does this hold" (dimension 17)
-    and was measured at 9 of 10 real Dockerfiles; semgrep silently skips `Dockerfile.dev`,
+    drops privilege, which is the container form of "what authority does this hold" (dimension 17).
+    It flagged **10 of 11 real Dockerfiles, the 11th correctly** — but only **45% of its individual
+    findings** are the deployed defect, because a discarded builder stage looks identical to the
+    pattern. **The last `FROM` in the file is the stage that ships**; treat earlier hits as noise
+    unless the builder itself is published. Do not assume a `distroless` base excuses the finding —
+    `gcr.io/distroless/base-debian12` defaults to root, and only the `:nonroot` tag drops privilege.
+    Finally, semgrep silently skips `Dockerfile.dev`,
     `Dockerfile.prod` and `Containerfile`, so copy such a file to `Dockerfile` before scanning.
     **OS packages installed inside a Dockerfile are this dimension's defect too**: `apt-get install
     <pkg>` with no version, or `pip install <pkg>` with no `==`, is the same unpinned dependency the

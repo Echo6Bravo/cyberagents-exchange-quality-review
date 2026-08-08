@@ -168,18 +168,36 @@ tells the assistant to repeat them rather than report a bare zero:
   MCP servers bind via a framework factory rather than `.listen()`. It was missing 8 real sites. A zero
   is only evidence after you have checked that the construct is present — otherwise it is a blind spot
   wearing a passing grade.
-- **The two config-language rules were measured on a smaller corpus, and the bound is stated rather
-  than rounded up.** `yaml-unpinned-action-ref` was measured against **27 real workflow files from 7
-  MCP-server repositories**: 128 `uses:` references, **112 unpinned and 16 pinned**. At an ~88% base
-  rate the rule is not finding an edge case, it is reporting the ecosystem's default state — which is
-  exactly why its severity is WARNING and why dimension 18 escalates only where the workflow holds
-  secrets or `write` permissions and the publisher is not well known. `docker-final-stage-runs-as-root`
-  was measured against **10 real Dockerfiles**, 9 of which never drop root. `hadolint` was run against
-  the same corpus as a control and produced **zero net new security findings**: its DL3002 fires only
-  on an explicit `USER root`, so it flagged 0 of the 9, and on the *fixed* file it raised DL3066
-  (non-numeric uid) while staying silent on the actual omission. **Neither number is a
-  false-positive rate** — both corpora are small, and no out-of-tree FP measurement exists for these
-  two rules because the corpus checkout was not retained. Do not report them as precision results.
+- **The two config-language rules were measured out-of-tree on 7 real MCP-server repositories, and the
+  file-level and finding-level answers differ enough that both are published.** Corpus:
+  `modelcontextprotocol/servers` + `typescript-sdk`, `github-mcp-server`, `context7`,
+  `Figma-Context-MCP`, `mcp-server-cloudflare`, `playwright-mcp`.
+  - `yaml-unpinned-action-ref` — 40 workflow files, **186 `uses:` refs, 26 digest-pinned, 160 not**;
+    the rule reported **exactly 160**, and an independent `grep` predicted that number before the scan
+    ran. **Zero already-pinned refs were flagged** — the false positive that would discredit the rule.
+    **Precision 146/160 = 91%**, and the residual 9% is a single mechanically recognisable shape: 14
+    local `uses: ./…` composite-action refs, which have no remote ref to pin. 145 of the 146 genuine
+    hits are a bare major tag like `@v4`. At an **86% unpinned base rate** the rule is not finding an
+    edge case, it is reporting the ecosystem's default state — which is why its severity is WARNING and
+    why dimension 18 escalates only where the workflow holds secrets or `write` permissions and the
+    publisher is not well known. Parse errors were checked rather than assumed: **0**.
+  - `docker-final-stage-runs-as-root` — 11 Dockerfiles. **File-level accuracy 11/11**: all 10 files
+    with no `USER` were flagged, and the one file that sets one (`playwright-mcp`) was correctly
+    silent. But **finding-level precision is 10/22 = 45%**, because 12 hits are discarded *builder*
+    stages — multi-stage is house style here, so expect roughly one FP per extra stage per file. Both
+    numbers are honest and answer different questions; report the second, since a reviewer pasting 22
+    findings has 12 to dismiss. Triage is mechanical — **the last `FROM` is the stage that ships**. All
+    10 final-stage hits were verified by reading the file.
+  - **A near-miss worth keeping.** The `distroless` false-positive caveat was nearly recorded as
+    applying to `github-mcp-server`, and it does not: `gcr.io/distroless/base-debian12` defaults to
+    **root**, and only the explicit `:nonroot` tag drops privilege. Untagged distroless is a true
+    positive, so the base image name alone does not settle the triage.
+  - **Controls, run first.** `hadolint` produced **zero net new security findings** — DL3002 fires only
+    on an explicit `USER root`, so it flagged 0 of the 10, and on the *fixed* file it raised DL3066
+    (non-numeric uid) while staying silent on the actual omission. `actionlint` (already in this kit)
+    reported nothing on any of the 160 unpinned refs, and `yamllint` produced 0 security findings.
+  - **Bound.** 11 Dockerfiles and 40 workflows is a small corpus from one ecosystem, and the Dockerfile
+    45% is measured against *these* multi-stage conventions. Both are indicative, not general.
 - **Vendored code dominates the hits.** All 16 `eval`/`new Function` findings were in prototype.js,
   YUI, socket.io, and ace — correctly flagged, and all the same already-known fact about code the
   submitter didn't write. Scope scans to first-party source, or a vendored bundle will make a review
