@@ -81,9 +81,10 @@ ENTRYPOINT ["/usr/local/bin/tool"]
 
 # --- must-catch: multi-stage where the BUILDER drops root and the FINAL stage does not. Only the
 # --- final stage's FROM is annotated, which is what proves the builder is correctly excused rather
-# --- than the rule simply flagging every FROM. Bases are deliberately DIFFERENT images: with
-# --- IDENTICAL bases the single `$I` metavariable can bind across the boundary and one stage's
-# --- `USER` can excuse the other (measured; documented as a false-negative path in the rule header).
+# --- than the rule simply flagging every FROM. Bases are DIFFERENT images here, but that is
+# --- incidental -- an earlier version of this comment claimed identical bases would let the single
+# --- `$I` bind across the stage boundary and excuse the defect. Ablation disproved it on four probes
+# --- (including two truly identical `FROM node:20` lines); see the correction in the rule header.
 FROM golang:1.23 AS builder
 WORKDIR /src
 RUN useradd --uid 10002 builduser

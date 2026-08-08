@@ -41,11 +41,22 @@
 # intermediate stages, which is the acceptable direction for this trade: an unexcused builder is a
 # documented false positive below, while a missed builder is not a deployed risk.
 #
-# SECOND LIMIT, measured and unfixed: `$I` is one metavariable, so when two stages share an IDENTICAL
-# base image the `FROM $I ... USER $U` shape can bind across the boundary and one stage's `USER` can
-# excuse the other. Measured directly (`FROM node:20 AS b` / `FROM node:20` + `USER app` -> 0
-# findings). The fixture uses deliberately DIFFERENT bases for that reason; a real listing that
-# reuses one base image and drops root in only one stage would be missed.
+# A SECOND LIMIT WAS CLAIMED HERE AND IS FALSE. This header previously stated that because `$I` is a
+# single metavariable, two stages sharing an IDENTICAL base image could bind across the stage boundary
+# and one stage's `USER` could excuse the other. Re-measured by ablation on four purpose-built probes,
+# and the rule catches every one of them:
+#
+#     FROM node:20 AS b / USER app / ... / FROM node:20 / CMD ....... reports the final FROM
+#     truly identical FROM lines, no AS alias, builder USER only .... reports the final FROM
+#
+# The original 0-finding measurement had conflated this with the EOF-span row below: a probe where the
+# BUILDER is rootful and the FINAL stage drops root does report 0, which is CORRECT -- the stage that
+# ships is not rootful. That is the documented span behaviour, not a metavariable failure.
+#
+# The fixture still uses deliberately different bases, which is harmless, but NOT for this reason.
+# Left in place as a correction rather than deleted: an invented limitation is the same overstatement
+# this skill grades under dimension 12, and a reader who trusted it would have hand-audited
+# shared-base multi-stage builds the rule already covers.
 #
 # KNOWN FALSE POSITIVES (both measured on the real corpus; triage by reading):
 #   * a DISCARDED builder stage. Running the build as root is not the deployed risk, and nothing is
@@ -83,9 +94,21 @@ rules:
       confidence: MEDIUM
     patterns:
       - pattern: FROM $I
-      # The omission matcher. `...` spans the rest of the stage, so any `USER` after this `FROM`
-      # excuses it -- and, because each `FROM` opens a new stage, a builder's `USER` does not excuse
-      # a root final stage. See the header for the identical-base-image limit on this.
+      # The omission matcher: this `FROM` is reported when no `USER` follows it.
+      #
+      # `FROM $I` here, rather than `FROM ...`, is DELIBERATE BUT NOT LOAD-BEARING, and saying so is
+      # the point of this comment. Ablation compared the two spellings across six inputs -- the
+      # fixture plus five purpose-built multi-stage probes (identical bases, aliased and not; rootful
+      # builder with clean final; rootful first stage with a different-based clean stage after) -- and
+      # they returned IDENTICAL findings on every one. The metavariable buys no discrimination that
+      # has been demonstrated. It is kept only because it reads as the intended semantics ("no USER
+      # under THIS image's stage"); do not describe it as a guard, and do not add a claim about
+      # cross-stage binding without a probe that distinguishes it. A previous version of this file
+      # made exactly that claim and it was FALSE -- see the correction in the header.
+      #
+      # What genuinely IS load-bearing here is `USER $U`: narrowing it to the literal `USER root`
+      # (hadolint's DL3002 shape) takes the fixture from 2 findings to 8, because every correctly
+      # dropped-privilege stage stops being excused. That is the element carrying the rule.
       - pattern-not-inside: |
           FROM $I
           ...
