@@ -46,6 +46,40 @@ expected to keep that bar green.
   annotated lines exactly, so near-misses are enforced true negatives), a documented
   false-positive/blind-spot list in the rule header, and **Gate 5 mutation rows in
   `scripts/test_scripts.sh`** — the coverage check fails the build if a rule has none.
+- **A fixture's FILENAME is load-bearing, and getting it wrong scans nothing while reporting a pass.**
+  semgrep claims targets by exact extension or filename, and a miss is silent — 0 findings, rc=0, no
+  notice. Measured: YAML scans only `.yml`/`.yaml` (`*.yml.test`, `*.yaml.test`, `*.test-yml`,
+  `*.yml.fixture` all scan **nothing**); Dockerfile scans `Dockerfile` and any `*.dockerfile`, while
+  `Dockerfile.dev`, `Dockerfile.prod` and `Containerfile` are **skipped**. For a YAML rule the fixture
+  must be `<rule-id>.test.yml`, which is the only name satisfying all three constraints at once: it is
+  semgrep's fixture convention (so the check resolves and `config_missing_tests` stays empty), it ends
+  in `.yml` (so it is scanned), and it is not `*.yaml` (so `gate2`'s `count(*.yaml) == rules` stays
+  honest — a `.yaml` fixture is counted as a *rule*). `test_<rule>.yml`, `<rule>.fixed.yml`,
+  `<rule>.fixture.yml` and `<rule>/x.yml` were measured and do **not** resolve; the check vanishes
+  from `results` entirely rather than failing. Related: only **one** fixture per rule is ever read — a
+  second `<rule>.good.<ext>` beside it is ignored while the check still reports `passed=True`, so
+  every case has to live in the one file.
+- **Prose in a fixture must never spell the annotation keyword followed by a colon.** semgrep honors
+  `# ruleid:` wherever it appears, *including inside a comment*, and then demands a finding on the next
+  line. This bit twice while writing the Dockerfile fixture, and one instance escaped failing only
+  because the following line happened to be another comment.
+- **A clean YAML run can mean the file was never analysed. Check `errors`, not the exit code.** A
+  quoted scalar containing a colon-space anywhere in a YAML file — `run: echo "Result: ok"`, an
+  entirely ordinary line — makes semgrep's YAML parser emit `mapping values are not allowed in this
+  context`, after which the file yields **zero findings in total**, including from lines above the
+  offending one that matched a moment earlier. Severity is `warn`, exit code is **0**, and the text
+  report still prints `Parsed lines: ~100.0%`. Use a block scalar (`run: |`) in fixtures, and when
+  measuring against a real corpus read the JSON: `semgrep scan --config … --json … | python3 -c
+  "import json,sys; print(json.load(sys.stdin).get('errors'))"`. A non-empty `errors` array on a file
+  that reported nothing means that file was not scanned. This is the dimension-1 silent-zero defect
+  this skill grades in other people's work, live in its own toolchain.
+- **`pattern-not-inside`'s `...` spans to END OF FILE in dockerfile mode, not to the end of the
+  enclosing stage.** Measured: a root stage followed *anywhere later in the file* by a `USER` is
+  excused. `docker-final-stage-runs-as-root` is still sound, because the final stage is what ships and
+  nothing follows it — but it means fixture **ordering is load-bearing**: a must-NOT-catch stage placed
+  after a must-catch stage silently suppresses the must-catch. Put negative cases first and end the
+  file on the defect. An earlier draft got this backwards and measured 0 findings on two planted
+  defects while looking correct.
 - **Editing an existing rule needs a row per new *branch*, not per rule.** Gate 5's rule-level check
   is satisfied by one row, so adding a `pattern-either` branch to a rule that already has rows will
   ship untested and still go green. This happened once: the framework-factory branch of
