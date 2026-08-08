@@ -1,0 +1,92 @@
+# Dimension 17 (access control & agent authority). CWE-250.
+#
+# WHY THIS EXISTS. A published MCP server or agent container that never drops privilege runs every
+# tool call, every `child_process.exec`, every file write as uid 0. Nothing else in this kit sees it:
+# `ruff`/`bandit` are Python-only, and the TS rules analyse source, not the image that ships it.
+# Dimension 17 asks what authority the agent holds; for a container the answer is set by one line
+# that is usually ABSENT rather than wrong, which is why this rule matches an omission.
+#
+# WHY NOT hadolint. hadolint was installed and MEASURED against this exact question before this rule
+# was written, and it does not answer it. `DL3002 "Last USER should not be root"` fires only on an
+# EXPLICIT `USER root`; a Dockerfile with no `USER` instruction at all reports 0 findings, rc=0, even
+# at `--failure-threshold style`. Measured on 10 real MCP-server Dockerfiles: 9 of the 10 never drop
+# root, and hadolint flagged 0 of them. It also flagged the FIXED file (`USER node`) with DL3066
+# "non-numeric user-id" -- complaining about the remediation while silent on the defect. Across the
+# whole corpus its net new SECURITY findings were zero (the rest were image-size and style). A tool
+# that returns rc=0 on a root container is worse than no tool, because the green check reads as
+# coverage. The one genuine overlap it did have -- unversioned `apt-get install` -- is captured as
+# dimension 18 prose instead, since that is the same unpinned-dependency defect the dimension
+# already grades.
+#
+# HOW THE PATTERN WORKS -- and the ONE thing to understand before trusting it. `pattern-not-inside`
+# excuses a `FROM` when a `USER` follows it, but the `...` spans to END OF FILE, **not** to the end of
+# the enclosing stage. Semgrep's dockerfile mode does not give the pattern a stage boundary to stop
+# at. Measured truth table:
+#
+#     single stage, no USER ............................. line 1        (fires)
+#     single stage, with USER ........................... none
+#     builder sets USER, final does not ................. final's FROM  (fires, correctly)
+#     builder does not, final sets USER ................. none
+#     NEITHER stage sets USER ........................... both FROMs
+#     both stages set USER .............................. none
+#
+# Row 4 is the consequence: a root stage followed ANYWHERE LATER IN THE FILE by a `USER` is excused,
+# even though that `USER` belongs to a different stage. That is a genuine false-negative path, and it
+# is stated here rather than buried because it looks like precision and is not.
+#
+# WHY THE RULE IS STILL SOUND FOR THE QUESTION IT ASKS. What ships is the FINAL stage, and nothing
+# follows it -- so the final stage can never be excused by a later `USER`. Row 3 is the proof: on a
+# file whose builder drops root and whose final stage does not, the rule reports the FINAL stage's
+# line and not the builder's. The rule is reliable about the stage that matters and unreliable about
+# intermediate stages, which is the acceptable direction for this trade: an unexcused builder is a
+# documented false positive below, while a missed builder is not a deployed risk.
+#
+# SECOND LIMIT, measured and unfixed: `$I` is one metavariable, so when two stages share an IDENTICAL
+# base image the `FROM $I ... USER $U` shape can bind across the boundary and one stage's `USER` can
+# excuse the other. Measured directly (`FROM node:20 AS b` / `FROM node:20` + `USER app` -> 0
+# findings). The fixture uses deliberately DIFFERENT bases for that reason; a real listing that
+# reuses one base image and drops root in only one stage would be missed.
+#
+# KNOWN FALSE POSITIVES (both measured on the real corpus; triage by reading):
+#   * a DISCARDED builder stage. Running the build as root is not the deployed risk, and nothing is
+#     shipped from that stage but copied artifacts. Two of the corpus hits are this.
+#   * a `distroless` or `scratch` final stage, which commonly has no shell and a nonroot IMAGE
+#     DEFAULT (`gcr.io/distroless/nodejs:nonroot`). The `USER` line is genuinely unnecessary there,
+#     and the rule cannot read the base image's default uid.
+#
+# KNOWN BLIND SPOT -- SILENT, and the reason it is documented here rather than in a footnote:
+# semgrep claims Dockerfile targets by EXACT filename. `Dockerfile`, `dev.Dockerfile` and anything
+# ending `.dockerfile` are scanned; `Dockerfile.dev`, `Dockerfile.prod` and `Containerfile` are
+# SKIPPED SILENTLY -- 0 findings, rc=0, no error and no skip notice. Measured, all five spellings.
+# This is the same silent-zero shape this skill grades under dimension 1: a reviewer who scans a
+# repo whose image is built from `Dockerfile.prod` gets a clean result that means nothing. If a
+# listing ships one of those spellings, copy it to `Dockerfile` before scanning, or read it by hand.
+rules:
+  - id: docker-final-stage-runs-as-root
+    languages: [dockerfile]
+    severity: WARNING
+    message: >-
+      dim17: this build stage never drops privilege -- no `USER` instruction follows its `FROM`, so
+      everything the image runs does so as uid 0. For a published agent or MCP server that means
+      every tool call, shell-out and file write holds root inside the container, and a container
+      escape starts from root rather than from an unprivileged account. Fix by adding a non-root
+      `USER` (with a numeric uid where the runtime needs to know it) as the last privilege-relevant
+      instruction of the final stage. Two legitimate shapes will also land here and are worth
+      recognising rather than suppressing: a DISCARDED builder stage (only its artifacts ship), and
+      a `distroless`/`scratch` final stage whose base image already defaults to nonroot. Also note
+      what this rule CANNOT see: semgrep skips `Dockerfile.dev`, `Dockerfile.prod` and
+      `Containerfile` silently, so a clean run does not mean the image was scanned.
+    metadata:
+      qr-dimension: 17
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
+      owasp: "A02:2025 Security Misconfiguration"
+      confidence: MEDIUM
+    patterns:
+      - pattern: FROM $I
+      # The omission matcher. `...` spans the rest of the stage, so any `USER` after this `FROM`
+      # excuses it -- and, because each `FROM` opens a new stage, a builder's `USER` does not excuse
+      # a root final stage. See the header for the identical-base-image limit on this.
+      - pattern-not-inside: |
+          FROM $I
+          ...
+          USER $U

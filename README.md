@@ -96,7 +96,10 @@ them alongside `bandit` would report every Python security finding twice. `bandi
 
 semgrep exists here to cover **JS/TS**, which `ruff` and `bandit` cannot see at all. That gap
 matters: a large share of Exchange listings are TypeScript MCP servers, so without it those repos
-got `gitleaks` plus a human read and nothing else.
+got `gitleaks` plus a human read and nothing else. Two rules also cover **workflow YAML and
+Dockerfiles**, where the defect is in what ships rather than in the source — `actionlint` and
+`yamllint` were both measured against those two shapes first and reported **nothing**, because ref
+mutability and privilege-dropping are not syntax questions.
 
 **Installing semgrep is not the same as gaining coverage.** It ships **no bundled security rules** —
 out of the box it is an engine with nothing to run. So this skill reports it in **three** states, and
@@ -165,6 +168,18 @@ tells the assistant to repeat them rather than report a bare zero:
   MCP servers bind via a framework factory rather than `.listen()`. It was missing 8 real sites. A zero
   is only evidence after you have checked that the construct is present — otherwise it is a blind spot
   wearing a passing grade.
+- **The two config-language rules were measured on a smaller corpus, and the bound is stated rather
+  than rounded up.** `yaml-unpinned-action-ref` was measured against **27 real workflow files from 7
+  MCP-server repositories**: 128 `uses:` references, **112 unpinned and 16 pinned**. At an ~88% base
+  rate the rule is not finding an edge case, it is reporting the ecosystem's default state — which is
+  exactly why its severity is WARNING and why dimension 18 escalates only where the workflow holds
+  secrets or `write` permissions and the publisher is not well known. `docker-final-stage-runs-as-root`
+  was measured against **10 real Dockerfiles**, 9 of which never drop root. `hadolint` was run against
+  the same corpus as a control and produced **zero net new security findings**: its DL3002 fires only
+  on an explicit `USER root`, so it flagged 0 of the 9, and on the *fixed* file it raised DL3066
+  (non-numeric uid) while staying silent on the actual omission. **Neither number is a
+  false-positive rate** — both corpora are small, and no out-of-tree FP measurement exists for these
+  two rules because the corpus checkout was not retained. Do not report them as precision results.
 - **Vendored code dominates the hits.** All 16 `eval`/`new Function` findings were in prototype.js,
   YUI, socket.io, and ace — correctly flagged, and all the same already-known fact about code the
   submitter didn't write. Scope scans to first-party source, or a vendored bundle will make a review
@@ -210,7 +225,7 @@ For bug classes no off-the-shelf scanner covers, in `scripts/`:
 | `tautology-scan.sh` | `assert … or not <precondition>` escape hatches — assertions that pass without ever evaluating their real claim | 11 |
 | `field-coverage-scan.sh` | Hostile-value payloads applied to **one field** — diffs declared string fields against the fields any hostile test names | 2 |
 | `pinned-vuln-scan.py` | Dependencies that are **pinned and vulnerable** — a clean pinning review says nothing about this, since a pin reproduces whatever it was and never drifts to a fix. Checks each exact pin against the GitHub Advisory DB via `gh` | 18 |
-| `semgrep-rules/` | **15 authored rules** for shapes `ruff`/`bandit` cannot reach — ten of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values; a `catch` that returns a permissive value; an SSRF URL built from scanned data; a file write with no containment guard. Plus five Python rules: two test-quality shapes, path containment, an SSRF URL built from scanned data, and an exception handler that fails **open**. | 2, 3, 6, 8, 11, 13, 17 |
+| `semgrep-rules/` | **17 authored rules** for shapes `ruff`/`bandit` cannot reach — ten of them JS/TS, which nothing else in the toolkit can parse: credentials in `localStorage`; `rejectUnauthorized: false`; wildcard CORS and `listen(…, "0.0.0.0")`; scanned data interpolated into an LLM `system:` prompt; `eval`/`new Function`/unsafe `yaml` schema; `md5`/`Math.random()` for security values; a `catch` that returns a permissive value; an SSRF URL built from scanned data; a file write with no containment guard. Five Python rules: two test-quality shapes, path containment, an SSRF URL built from scanned data, and an exception handler that fails **open**. Plus two rules in the **config** languages, where the defect is in what ships rather than in the source: a GitHub Actions `uses:` not pinned to a commit SHA, and a Dockerfile build stage that never drops root. | 2, 3, 6, 8, 11, 13, 17, 18 |
 
 Every scanner except `mutation-check.sh` is a **heuristic**: each hit is a question to answer by
 reading the code, never a confirmed defect, and **zero hits is never proof**. Each ships with tests,

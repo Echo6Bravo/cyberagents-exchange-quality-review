@@ -1,0 +1,94 @@
+# Fixture for yaml-unpinned-action-ref.
+#
+# THE FILENAME IS THE HARD-WON PART OF THIS FILE. Three constraints collide, and getting any one wrong
+# fails SILENTLY:
+#
+#  1. semgrep claims YAML targets by extension. `.yml` and `.yaml` are scanned; EVERYTHING else is
+#     skipped with 0 findings, rc=0 and no notice. Measured across seven spellings, including the
+#     `*.yml.test` name this repo's own working log had assumed would work -- it scans NOTHING. So the
+#     fixture must end in `.yml` or `.yaml`.
+#
+#  2. But a fixture named `yaml-unpinned-action-ref.yaml` collides with rule discovery: `semgrep test`
+#     tries to parse it AS A RULE CONFIG and dies with "invalid configuration found in
+#     ./yaml-unpinned-action-ref.yml". Worse, `semgrep test --json` then prints NOTHING to stdout
+#     (rc=7, message on stderr) -- so Gate 1's JSON parse gets an empty stream. Gate 1 handles that
+#     case explicitly, which is the only reason it surfaces as a failure rather than a crash.
+#
+#  3. And a plain `.yaml` fixture in this directory would ALSO be counted as a rule by Gate 2, which
+#     asserts `count(*.yaml) == count(rules exercised)`.
+#
+# `.test.yml` satisfies all three: it is semgrep's own documented fixture convention (so `test`
+# resolves it against the rule -- `config_missing_tests: []`), it ends in `.yml` (so it is scannable),
+# and it is not `*.yaml` (so Gate 2's count stays honest). `.test.yaml` also resolves but violates
+# constraint 3. Other near-misses that were measured and DO NOT resolve -- semgrep reports "could not
+# find target" for BOTH the fixture and the rule, and the check silently vanishes from `results`:
+# `test_<rule>.yml`, `<rule>.fixed.yml`, `<rule>.fixture.yml`, `<rule>/x.yml`.
+#
+# This layout was proven live, not assumed: moving a must-catch annotation onto the digest-pinned line
+# flips `passed` to False. A fixture that cannot be made to fail is not testing anything. (Note the
+# careful wording -- prose in this file must never spell the annotation keyword followed by a colon,
+# because semgrep reads it as a real annotation wherever it appears and then demands a finding on the
+# next line. Measured: it did, and the check failed on a comment.)
+#
+# ALSO MEASURED: only ONE fixture per rule is read. A second `<rule>.good.yml` beside this one is
+# ignored entirely while the check still reports `passed=True`. Every case has to live in this file.
+
+name: ci
+on: [push]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # --- must-catch: a mutable version tag. The overwhelmingly common real case -- 112 of 128
+      # --- `uses:` references in the measured 7-repo corpus look like this.
+      # ruleid: yaml-unpinned-action-ref
+      - uses: actions/checkout@v4
+
+      # --- must-catch: a BRANCH ref, which is even more volatile than a tag.
+      # ruleid: yaml-unpinned-action-ref
+      - uses: some-org/deploy-action@main
+
+      # --- must-catch: a floating major-version tag with a `with:` block, to confirm the pattern is
+      # --- not disturbed by sibling keys under the same step.
+      # ruleid: yaml-unpinned-action-ref
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # --- must-NOT-catch: pinned to a full 40-character commit SHA. The trailing comment is the
+      # --- idiomatic way to keep the version human-readable and must not defeat the regex.
+      - uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.1.0
+
+      # --- must-NOT-catch near-miss: an UPPERCASE-hex digest. The character class accepts both cases;
+      # --- a `[0-9a-f]`-only regex would false-positive on this correctly-pinned reference.
+      - uses: docker/build-push-action@A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
+
+      # --- must-NOT-catch: not a `uses:` key at all. Unannotated near-misses that a loosely-written
+      # --- pattern would sweep up. The `uses:` text is inside a BLOCK SCALAR rather than a quoted
+      # --- string, and that is mandatory, not stylistic: a quoted scalar containing a colon-space
+      # --- (`run: echo "uses: x@v1"`) triggers a semgrep YAML parse error that returns ZERO findings
+      # --- FOR THE WHOLE FILE. See the rule header -- this is the worst blind spot in this rule and
+      # --- this line exists partly to keep a working spelling in front of whoever edits next.
+      - name: uses is only a word here
+        run: |
+          echo "uses: not-an-action@v1"
+
+      # --- must-catch: 39 hex characters -- one short of a real SHA, so NOT immutable. This is the
+      # --- boundary case for the `{40}` quantifier and the reason it is exact rather than `{7,}`.
+      # ruleid: yaml-unpinned-action-ref
+      - uses: some-org/truncated@8f152de45cc393bb48ce5d89d36b731f5455 6e6
+
+  # A second job, so the rule is exercised outside a single `steps:` block.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8f152de45cc393bb48ce5d89d36b731f54556e65
+      # --- must-catch: last `uses:` in the file. Deliberately placed LAST, because the rejected
+      # --- `pattern-not-regex` formulation false-positived specifically on the FINAL LINE of a file;
+      # --- keeping a case here means a regression back to that spelling shows up as a failure.
+      # ruleid: yaml-unpinned-action-ref
+      - uses: github/super-linter@v6

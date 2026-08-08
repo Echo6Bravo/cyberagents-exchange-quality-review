@@ -7,6 +7,61 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Two rules in the config languages — the first coverage of files that are neither Python nor
+  TypeScript.** Every rule so far analysed *source*; these two analyse what ships alongside it.
+  `yaml-unpinned-action-ref` (dim 18, CWE-829) flags a GitHub Actions `uses:` not pinned to a full
+  40-character commit SHA, since a tag is mutable and a re-pointed `@v4` runs new third-party code
+  inside a job that typically holds `GITHUB_TOKEN`, with no diff and no review.
+  `docker-final-stage-runs-as-root` (dim 17, CWE-250) flags a build stage that never drops privilege.
+  Both are WARNING, not ERROR, and deliberately so for the YAML rule: at an **88% base rate** ERROR
+  would fail nearly every listing on a defect it shares with most of GitHub, which trains reviewers to
+  ignore the finding — the risk is conditional on upstream compromise, so escalation needs a human.
+  - **Measured, with the bound stated.** 27 workflow files across 7 MCP-server repos: **112 of 128
+    `uses:` refs unpinned**. 10 real Dockerfiles: **9 never drop root**. Neither is a false-positive
+    rate; both corpora are small and the checkout was not retained, so no out-of-tree FP measurement
+    exists for these two rules.
+  - **Both existing linters were run as controls first, and both reported nothing.** `actionlint`
+    (already in this kit) validates workflow syntax and schema and has no opinion on ref mutability —
+    0 findings on all 112 unpinned refs. `yamllint` produced **0 security findings** against 4 planted
+    defects and 27 real workflows; its output was 110 line-length warnings, 3 empty-line warnings and 1
+    missing-newline. `hadolint` produced **zero net new security findings** on the Dockerfile corpus:
+    DL3002 fires only on an explicit `USER root`, so it flagged 0 of the 9, and on the *fixed* file it
+    raised DL3066 (non-numeric uid) while staying silent on the actual omission. A tool that exits
+    nonzero on long lines and says nothing about a mutable third-party code reference is not a security
+    control here.
+  - **11 Gate 5 rows and 4 negative controls, every one measured before it was committed to the table.**
+    One plausible-looking row was **rejected on measurement**: mutating the final `CMD` to a `USER` line
+    removes *both* Dockerfile findings via the EOF-span behaviour below, so it cannot serve as a
+    `one` row. Suite: 172 → **183 tests**, `semgrep test` 15 → **17 checks**, all passing.
+- **Three new silent-zero classes in semgrep itself, characterized and documented in-tree.** Each is
+  the dimension-1 defect this skill grades in other people's work, found in its own toolchain:
+  - **A quoted scalar containing a colon-space returns ZERO findings for the ENTIRE YAML file.**
+    `run: echo "Result: ok"` — an utterly ordinary line — trips `mapping values are not allowed in this
+    context`, after which the file yields nothing at all, *including from `uses:` lines above it that
+    matched a moment earlier*. Severity `warn`, exit code **0**, and the text report still prints
+    `Parsed lines: ~100.0%`. Only the JSON `errors` array reveals it. This is total loss of coverage
+    per file, not one missed reference, and it must be assumed live on some real workflows.
+  - **Target claiming is by exact extension/filename, and misses are silent.** YAML scans only
+    `.yml`/`.yaml`; `*.yml.test`, `*.yaml.test`, `*.test-yml` and `*.yml.fixture` scan **nothing** with
+    rc=0 and no notice — which invalidated the `.yml.test` fixture name this repo's own working notes
+    had assumed would work. Dockerfiles: `Dockerfile` and `*.dockerfile` are claimed; `Dockerfile.dev`,
+    `Dockerfile.prod` and `Containerfile` are **skipped silently**. `<rule>.test.yml` is the only
+    fixture name satisfying all three colliding constraints (resolves as a fixture, ends in `.yml`,
+    isn't `*.yaml` so `gate2`'s rule count stays honest); four other spellings were measured and make
+    the check vanish from `results` rather than fail.
+  - **`pattern-not-inside`'s `...` spans to end of FILE, not end of stage, in dockerfile mode.** A root
+    stage followed anywhere later by a `USER` is excused. The rule is still sound — the final stage
+    ships and nothing follows it — but **fixture ordering is load-bearing**: a must-NOT-catch stage
+    after a must-catch stage silently suppresses it. An earlier draft did exactly that and measured 0
+    findings on two planted defects while looking correct. Negative cases first, file ends on the defect.
+  - Also measured and corrected: `metavariable-regex` applies `re.match`, so it is **anchored at the
+    start** of the bound value (`^actions` matched; `checkout` and `@` matched nothing) — every regex
+    there must lead with `.*`. It **does** accept negative lookahead, contrary to an earlier note in
+    this repo; and `pattern-not-regex: '@[0-9a-fA-F]{40}\s*$'` was tried first and **rejected** for
+    false-positiving on a correctly digest-pinned ref when that ref is the file's last line with a
+    trailing newline. The fixture keeps a last-line case specifically so a regression back to that
+    spelling fails. Finally, `# ruleid:` is a **live annotation wherever it appears, including inside a
+    comment** — it bit twice in these fixtures' own header prose.
 - **Coverage for the OWASP GenAI/LLM and Agentic risk lists, which had never been walked.** The OWASP
   audit behind the current dimensions covered the **web-application** Top 10 only — yet the LLM/AI
   dimensions exist precisely because most Exchange listings are LLM agents with live tool access, so the
