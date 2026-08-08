@@ -16,10 +16,20 @@ All notable changes to this skill are documented here. The format follows
   Both are WARNING, not ERROR, and deliberately so for the YAML rule: at an **88% base rate** ERROR
   would fail nearly every listing on a defect it shares with most of GitHub, which trains reviewers to
   ignore the finding — the risk is conditional on upstream compromise, so escalation needs a human.
-  - **Measured, with the bound stated.** 27 workflow files across 7 MCP-server repos: **112 of 128
-    `uses:` refs unpinned**. 10 real Dockerfiles: **9 never drop root**. Neither is a false-positive
-    rate; both corpora are small and the checkout was not retained, so no out-of-tree FP measurement
-    exists for these two rules.
+  - **Measured out-of-tree on 7 real MCP-server repos, with both precision figures published because
+    they disagree.** `yaml-unpinned-action-ref`: 40 workflow files, **186 `uses:` refs, 26 pinned, 160
+    not**, and the rule reported **exactly 160** — a number an independent `grep` predicted before the
+    scan ran. **Zero already-pinned refs flagged** (the FP that would discredit it), 0 parse errors,
+    **precision 146/160 = 91%**, residual 9% all one recognisable shape (14 local `uses: ./…` refs).
+    `docker-final-stage-runs-as-root`: 11 Dockerfiles, **file-level 11/11** — all 10 no-`USER` files
+    flagged, the one file that sets `USER` correctly silent — but **finding-level 10/22 = 45%**,
+    because 12 hits are discarded builder stages. Report the 45%: a reviewer pasting 22 findings has 12
+    to dismiss, triaged mechanically since the last `FROM` is the stage that ships. Bound: one
+    ecosystem, small corpus, and the 45% reflects *these* multi-stage conventions.
+  - **The `distroless` false-positive caveat was nearly recorded against a true positive.**
+    `gcr.io/distroless/base-debian12` (github-mcp-server's final stage) defaults to **root**; only the
+    explicit `:nonroot` tag drops privilege. The header now says the base image name alone does not
+    settle the triage — the tag does.
   - **Both existing linters were run as controls first, and both reported nothing.** `actionlint`
     (already in this kit) validates workflow syntax and schema and has no opinion on ref mutability —
     0 findings on all 112 unpinned refs. `yamllint` produced **0 security findings** against 4 planted
