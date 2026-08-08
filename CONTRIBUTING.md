@@ -95,7 +95,23 @@ expected to keep that bar green.
   with **6 inert elements out of 30**, including two `metavariable-regex` blocks written on a belief
   about JS/Python divergence that turned out to be **false**. Ablation is what caught it; `semgrep test`
   was green the whole time. Fix an inert element by extending the fixture, or by deleting the pattern —
-  never by leaving it in place looking protective.
+  never by leaving it in place looking protective. If an element resists both (it reads as the intended
+  semantics but no probe distinguishes it), **say that in the comment** rather than implying it guards
+  something: `docker-final-stage-runs-as-root`'s `FROM $I` coupling matched `FROM ...` on all six
+  inputs tried and is labelled inert-but-kept for exactly that reason.
+- **Ablate the QUANTIFIERS and character classes too, not just whole clauses — and in both
+  directions.** A boundary fixture can flag for the wrong reason and leave the boundary untested.
+  Measured here: `yaml-unpinned-action-ref`'s 39-character case contained a **space inside the ref**,
+  so relaxing `{40}` to `{7,}` changed the count by zero — the exactness had no committed test while
+  `semgrep test` reported green. Loosening must *lose* a finding and tightening must *gain* one; if
+  only one direction moves, the fixture is missing a case.
+- **Ablation also audits the rule's own documented limitations, which is a use for it worth naming
+  separately.** A "known blind spot" in a header is a claim, and a false one is worse than none — a
+  reader will hand-audit code the rule already covers. `docker-final-stage-runs-as-root` shipped a
+  fabricated `$I`-cross-stage-binding limit that four probes disproved; the original 0-finding
+  measurement had conflated it with the EOF-span behaviour. Before writing "this rule cannot see X",
+  build the probe for X and confirm the miss. Where a claim turns out to be wrong, correct it **in
+  place, visibly**, rather than quietly deleting it.
 - **Measure a new rule against a real corpus before calling it done, and report the noise class rather
   than the count.** A rule that fires 182 times is not a finding list, and shipping the number alone
   invites a reviewer to paste output they have not read. Say what the dominant shape is, whether it is

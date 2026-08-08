@@ -77,10 +77,18 @@ jobs:
         run: |
           echo "uses: not-an-action@v1"
 
-      # --- must-catch: 39 hex characters -- one short of a real SHA, so NOT immutable. This is the
-      # --- boundary case for the `{40}` quantifier and the reason it is exact rather than `{7,}`.
+      # --- must-catch: 39 CONTIGUOUS hex characters -- one short of a real SHA, so NOT immutable, and
+      # --- an abbreviated SHA is not a pin (git resolves it by prefix, so it can become ambiguous or
+      # --- point somewhere else as the repo grows). This is the boundary case for the `{40}`
+      # --- quantifier and the reason it is exact rather than `{7,}`.
+      # ---
+      # --- CONTIGUOUS is the load-bearing word, and it was wrong here until ablation caught it: this
+      # --- line previously read `...f5455 6e6`, with a SPACE inside the ref. The regex cannot span
+      # --- the space, so the line was flagged for the wrong reason and relaxing `{40}` to `{7,}`
+      # --- changed the finding count by ZERO -- the quantifier had no committed test while
+      # --- `semgrep test` stayed green. Keep this ref space-free, or the guard silently stops guarding.
       # ruleid: yaml-unpinned-action-ref
-      - uses: some-org/truncated@8f152de45cc393bb48ce5d89d36b731f5455 6e6
+      - uses: some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e6
 
   # A second job, so the rule is exercised outside a single `steps:` block.
   lint:

@@ -532,7 +532,7 @@ ts-path-write-without-containment${TAB}fs.promises.appendFile(finding.path, line
 yaml-unpinned-action-ref${TAB}actions/checkout@v4${TAB}actions/checkout@8f152de45cc393bb48ce5d89d36b731f54556e65
 yaml-unpinned-action-ref${TAB}some-org/deploy-action@main${TAB}some-org/deploy-action@8f152de45cc393bb48ce5d89d36b731f54556e65
 yaml-unpinned-action-ref${TAB}actions/setup-python@v5${TAB}actions/setup-python@8f152de45cc393bb48ce5d89d36b731f54556e65
-yaml-unpinned-action-ref${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f5455 6e6${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e65
+yaml-unpinned-action-ref${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e6${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e65
 yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/super-linter@8f152de45cc393bb48ce5d89d36b731f54556e65
 docker-final-stage-runs-as-root${TAB}COPY --from=builder /out/agent /usr/local/bin/agent${TAB}USER agentsvc
 docker-final-stage-runs-as-root${TAB}FROM node:20-alpine${TAB}# final stage elided"
