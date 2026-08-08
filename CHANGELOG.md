@@ -29,6 +29,31 @@ All notable changes to this skill are documented here. The format follows
     raised DL3066 (non-numeric uid) while staying silent on the actual omission. A tool that exits
     nonzero on long lines and says nothing about a mutable third-party code reference is not a security
     control here.
+  - **Ablation of all 6 pattern elements found two defects that `semgrep test` could not see, and it
+    stayed green through both.** Mutation rows mutate the *fixture*; ablation mutates the *rule*, and
+    only the second one asks "does this element do anything?".
+    - **The `{40}` quantifier had no committed test.** The 39-character boundary fixture read
+      `…f5455 6e6` — with a **space inside the ref** — so the regex could not span it and the line was
+      flagged for the wrong reason. Relaxing `{40}` to `{7,}` changed the finding count by **zero**.
+      Fixed to a contiguous 39-hex ref; the quantifier now ablates in *both* directions (`{7,}` loses
+      the boundary finding 5→4, `{41}` gains all three digest-pinned negatives 5→8).
+    - **A documented limitation was FABRICATED and is now corrected.** The rule header claimed that
+      two stages sharing an identical base image would let the single `$I` metavariable bind across the
+      stage boundary, so one stage's `USER` would excuse the other. Re-measured on four purpose-built
+      probes — including two *truly* identical `FROM node:20` lines with no alias — and the rule
+      **catches every one**. The original 0-finding measurement had conflated it with the EOF-span
+      behaviour: a probe whose builder is rootful while the final stage drops root correctly reports 0,
+      because the stage that ships is not rootful. The false claim is left in place as an explicit
+      correction rather than deleted, since a reader who trusted it would have hand-audited
+      shared-base multi-stage builds the rule already covers — dimension 12's overstatement defect,
+      pointing the wrong way.
+    - **One element is genuinely inert and is now labelled as such rather than left looking
+      protective.** `FROM $I` versus `FROM ...` inside `pattern-not-inside` returned identical
+      findings across all six inputs, so it buys no demonstrated discrimination; the comment now says
+      so and forbids adding a cross-stage claim without a probe that distinguishes it. The element
+      actually carrying the rule is `USER $U`: narrowing it to hadolint's literal `USER root` shape
+      takes the fixture from 2 findings to **8**. On the YAML side the `uses:` key literal is a real
+      guard — generalizing it to `$K: $A` goes 5 → **20**.
   - **11 Gate 5 rows and 4 negative controls, every one measured before it was committed to the table.**
     One plausible-looking row was **rejected on measurement**: mutating the final `CMD` to a `USER` line
     removes *both* Dockerfile findings via the EOF-span behaviour below, so it cannot serve as a
