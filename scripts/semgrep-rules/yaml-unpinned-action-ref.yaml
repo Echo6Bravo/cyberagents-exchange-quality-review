@@ -19,9 +19,25 @@
 # warnings, 3 empty-line warnings and 1 missing-newline. A tool that exits nonzero on long lines and
 # says nothing about a mutable third-party code reference is not a security control here.
 #
-# MEASURED on 27 real workflow files from 7 MCP-server repositories: 128 `uses:` references, of which
-# **112 were not digest-pinned and 16 were**. That ~88% rate is why this rule earns its place -- it is
-# not an edge case, it is the default state of the ecosystem.
+# MEASURED OUT-OF-TREE on 40 real workflow files from 7 MCP-server repositories (modelcontextprotocol
+# servers + typescript-sdk, github-mcp-server, context7, Figma-Context-MCP, mcp-server-cloudflare,
+# playwright-mcp): **186 `uses:` references, 26 digest-pinned, 160 not**. The rule reported exactly
+# 160 -- the arithmetic closes, which is the check that matters here: an independent `grep` for
+# `uses:` and for `@<40-hex>` predicted 186-26=160 before the scan was run.
+#
+#     findings ....................... 160
+#     already-pinned refs flagged .... **0**   <- the FP class that would discredit the rule
+#     parse errors ................... 0      <- see the colon-space blind spot below; checked, not assumed
+#     genuine unpinned refs .......... 146    (145 of them a bare major tag like `@v4`; 1 a `release/v1` branch)
+#     local `./` refs ................ 14 = **8.75% of hits**, the one real FP class (see below)
+#     by repo: github-mcp-server 42, servers 30, typescript-sdk 29, context7 19, playwright-mcp 19,
+#              mcp-server-cloudflare 15, Figma-Context-MCP 6
+#
+# So finding-level precision is **146/160 = 91%**, and the residual 9% is a single mechanically
+# recognisable shape (`uses: ./...`). Every reported line was verified to actually contain `uses:`.
+# An earlier, smaller measurement (27 files, 128 refs, 112 unpinned) gave the same ~88% unpinned base
+# rate; this larger run puts it at 160/186 = **86%**. Either way the point stands: this is not an edge
+# case, it is the default state of the ecosystem, and that is why the severity is WARNING.
 #
 # SEVERITY IS DELIBERATELY WARNING, NOT ERROR. Two reasons, and they pull the same way: at an 88% base
 # rate, ERROR would mean nearly every listing fails on a defect it shares with almost every repository
@@ -44,9 +60,16 @@
 # clean on all four. Do not "simplify" this back.
 #
 # KNOWN FALSE POSITIVES (triage by reading):
-#   * a first-party action from the same repository or org, where a moving tag is a deliberate choice
-#     and the trust boundary is not crossed. `uses: ./.github/actions/foo` (a LOCAL path with no `@`)
-#     also lands here and is a definite false positive -- there is no remote ref to pin at all.
+#   * a LOCAL composite action, `uses: ./.github/actions/foo` -- no `@` and no remote ref to pin, so
+#     it is a definite false positive and it is **the only FP class the corpus actually produced: 14
+#     of 160 hits (8.75%)**, concentrated in github-mcp-server, which calls `./.github/actions/build-ui`
+#     from 7 separate workflows. Mechanically recognisable by the leading `./`, so it is cheap to
+#     dismiss -- and worth fixing in the rule only if that ratio grows, since a `paths:`-style
+#     exclusion cannot express it and a `pattern-not` on `./` was left out deliberately to keep the
+#     rule's one regex readable.
+#   * a first-party action from the same repository or org referenced REMOTELY (`uses: my-org/act@v1`),
+#     where a moving tag may be a deliberate choice and the trust boundary is not crossed. Unlike the
+#     local case this is a judgement call, not a definite FP -- an org's own tag is still mutable.
 #   * `docker://` references, which pin by image tag rather than commit SHA. Same class of defect,
 #     different fix (a digest), so the finding is right but the suggested remediation is not.
 #
