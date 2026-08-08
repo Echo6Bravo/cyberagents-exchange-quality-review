@@ -1,0 +1,114 @@
+# Dimension 18 (model & dependency provenance). CWE-829.
+#
+# WHY THIS EXISTS. A GitHub Actions `uses:` reference to a tag or branch is a MOVING target. `@v4`
+# and `@main` both resolve at run time to whatever the upstream owner last pushed there, and a tag is
+# mutable -- it can be re-pointed at a different commit by anyone with write access to that repo, or
+# by anyone who compromises it. The workflow then executes new third-party code, inside a job that
+# usually holds a `GITHUB_TOKEN` and often repository secrets, with no diff and no review. Pinning to
+# a full 40-character commit SHA is the only spelling that makes the reference immutable. Dimension 18
+# already grades unpinned model and dependency provenance; this is the same defect in the CI channel,
+# and `pinned-vuln-scan.py` does not cover it (it reads dependency manifests, not workflows).
+#
+# WHY NOT actionlint, which this kit ALREADY RUNS. actionlint validates workflow SYNTAX and schema --
+# bad `runs-on`, undefined `needs`, shellcheck inside `run:` blocks. It has no opinion on ref
+# mutability, and it reported nothing on the 112 unpinned references measured below. Not a gap in
+# actionlint; a different question.
+#
+# WHY NOT yamllint. Measured before this rule was written: yamllint produced ZERO security findings
+# against 4 planted defects and against 27 real workflow files -- its output was 110 line-length
+# warnings, 3 empty-line warnings and 1 missing-newline. A tool that exits nonzero on long lines and
+# says nothing about a mutable third-party code reference is not a security control here.
+#
+# MEASURED on 27 real workflow files from 7 MCP-server repositories: 128 `uses:` references, of which
+# **112 were not digest-pinned and 16 were**. That ~88% rate is why this rule earns its place -- it is
+# not an edge case, it is the default state of the ecosystem.
+#
+# SEVERITY IS DELIBERATELY WARNING, NOT ERROR. Two reasons, and they pull the same way: at an 88% base
+# rate, ERROR would mean nearly every listing fails on a defect it shares with almost every repository
+# on GitHub, which trains reviewers to ignore the finding; and the risk is conditional on the upstream
+# repo being compromised or malicious rather than on anything the submitter did wrong. Dimension 18
+# escalates it when the workflow holds secrets or has `write` permissions AND the action is not from a
+# well-known publisher -- that judgement needs a human, and the message says so.
+#
+# THE PATTERN, and why the obvious spelling is wrong. `metavariable-regex` applies `re.match`, which
+# is ANCHORED AT THE START of the bound value -- measured directly: `^actions` matched, while both
+# `checkout` and `@` matched NOTHING. Any regex here must therefore lead with `.*`. The negation is a
+# negative lookahead over the whole value; contrary to an earlier note in this repo's own working
+# log, `metavariable-regex` accepts lookahead fine (the "invalid configuration" error that suggested
+# otherwise was really the fixture/rule glob collision described in the fixture header).
+#
+# `pattern-not-regex: '@[0-9a-fA-F]{40}\s*$'` was tried FIRST and REJECTED. It looks equivalent and
+# is not: it matched a digest-pinned `uses:` line when that line was the LAST LINE OF THE FILE,
+# producing a false positive on a correctly-pinned reference. Measured across four variants (digest
+# mid-file / last line with trailing newline / last line without). The `metavariable-regex` form was
+# clean on all four. Do not "simplify" this back.
+#
+# KNOWN FALSE POSITIVES (triage by reading):
+#   * a first-party action from the same repository or org, where a moving tag is a deliberate choice
+#     and the trust boundary is not crossed. `uses: ./.github/actions/foo` (a LOCAL path with no `@`)
+#     also lands here and is a definite false positive -- there is no remote ref to pin at all.
+#   * `docker://` references, which pin by image tag rather than commit SHA. Same class of defect,
+#     different fix (a digest), so the finding is right but the suggested remediation is not.
+#
+# KNOWN BLIND SPOTS:
+#   * a 40-hex-character ref that is not actually a commit SHA is accepted as pinned. Harmless in
+#     practice; noted so nobody mistakes the regex for verification.
+#   * `uses:` inside a composite-action `action.yml`, and reusable-workflow `uses:` at the job level,
+#     are matched only if the file is `.yml`/`.yaml` -- see the extension note below.
+#   * **SILENT, and the important one:** semgrep claims YAML targets by extension. `.yml` and `.yaml`
+#     are scanned; anything else -- including a fixture named `*.yml.test` -- is skipped with 0
+#     findings, rc=0 and no notice. Measured, seven spellings. A workflow-shaped file with any other
+#     extension is not scanned, and a clean run over such a tree means nothing.
+#
+#   * **WORSE, AND THE ONE TO KNOW ABOUT: a quoted scalar containing a colon-space anywhere in the
+#     file returns ZERO findings FOR THE ENTIRE FILE.** Measured: `run: echo "uses: x@v1"` and even
+#     the entirely innocuous `run: echo "key: val"` make semgrep's YAML parser emit
+#     `Other syntax error ... mapping values are not allowed in this context`, after which the file
+#     yields no findings at all -- including from `uses:` lines ABOVE the offending one, which had
+#     matched a moment earlier. The severity is `warn`, the exit code is 0, and the text report still
+#     prints `Parsed lines: ~100.0%`, so nothing about a clean run looks wrong.
+#
+#     `run: echo "Something: done"` is an utterly ordinary line in a real workflow, so assume this
+#     silently disables the rule on some real files. It is NOT a false negative on one reference; it
+#     is total loss of coverage for that file, which is why it is called out here rather than listed
+#     as a limitation. Block scalars (`run: |`) and unquoted values parse fine, and the fixture keeps
+#     a working spelling on purpose.
+#
+#     HOW TO CHECK, since the text output will not tell you -- read the JSON `errors` array, not the
+#     summary or the exit code:
+#         semgrep scan --config <rules> --json <target> | python3 -c \
+#           "import json,sys; print(json.load(sys.stdin).get('errors'))"
+#     A non-empty `errors` array on a file that reported no findings means the file was not analysed.
+#     This is precisely the dimension-1 silent-zero defect this skill grades in other people's work,
+#     present in its own tooling, and it is the reason Gate 5's batched scan attributes errors by
+#     path rather than trusting a per-file zero.
+rules:
+  - id: yaml-unpinned-action-ref
+    languages: [yaml]
+    severity: WARNING
+    message: >-
+      dim18: this `uses:` reference is not pinned to a full 40-character commit SHA, so it resolves at
+      run time to whatever the upstream owner last pushed to that tag or branch. Tags are mutable --
+      a re-pointed `@v4` silently runs new third-party code inside a job that typically holds
+      `GITHUB_TOKEN` and may hold repository secrets, with no diff and no review. Fix by pinning to a
+      full commit SHA (keep the human-readable version in a trailing comment). Dimension 18 rates this
+      higher when the workflow has `write` permissions or reads secrets AND the action is not from a
+      well-known publisher; it is often acceptable for a first-party action in the same org, and a
+      LOCAL `uses: ./...` path has no remote ref to pin and is a false positive here.
+    metadata:
+      qr-dimension: 18
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      owasp: "A03:2025 Software Supply Chain Failures"
+      confidence: MEDIUM
+    patterns:
+      # The colon inside the pattern value is why this is a block scalar rather than an inline string:
+      # an unquoted `uses: $A` on one line is parsed by the YAML loader as a nested mapping and the
+      # rule fails with "mapping values are not allowed here" -- reported as `findings: 0` with the
+      # cause buried in `errors`. This repo hit that exact gotcha again while deriving this rule.
+      - pattern: |
+          uses: $A
+      # Anchored at the start by `re.match`, hence the leading `.*` inside the lookahead and the
+      # trailing `.*` to consume the value. See the header for why `pattern-not-regex` is NOT used.
+      - metavariable-regex:
+          metavariable: $A
+          regex: '(?!.*@[0-9a-fA-F]{40}\s*$).*'

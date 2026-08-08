@@ -528,7 +528,14 @@ ts-path-write-without-containment${TAB}fs.appendFile(finding.path, line, () => u
 ts-path-write-without-containment${TAB}fs.writeFile(finding.path, body, () => undefined)${TAB}fs.writeFile(path.join(OUT, \"report.json\"), body, () => undefined)
 ts-path-write-without-containment${TAB}fs.createWriteStream(finding.path)${TAB}fs.createWriteStream(path.join(OUT, \"stream.bin\"))
 ts-path-write-without-containment${TAB}fs.promises.writeFile(finding.path, body)${TAB}fs.promises.writeFile(path.join(OUT, \"report.json\"), body)
-ts-path-write-without-containment${TAB}fs.promises.appendFile(finding.path, line)${TAB}fs.promises.appendFile(path.join(OUT, \"audit.log\"), line)"
+ts-path-write-without-containment${TAB}fs.promises.appendFile(finding.path, line)${TAB}fs.promises.appendFile(path.join(OUT, \"audit.log\"), line)
+yaml-unpinned-action-ref${TAB}actions/checkout@v4${TAB}actions/checkout@8f152de45cc393bb48ce5d89d36b731f54556e65
+yaml-unpinned-action-ref${TAB}some-org/deploy-action@main${TAB}some-org/deploy-action@8f152de45cc393bb48ce5d89d36b731f54556e65
+yaml-unpinned-action-ref${TAB}actions/setup-python@v5${TAB}actions/setup-python@8f152de45cc393bb48ce5d89d36b731f54556e65
+yaml-unpinned-action-ref${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f5455 6e6${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e65
+yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/super-linter@8f152de45cc393bb48ce5d89d36b731f54556e65
+docker-final-stage-runs-as-root${TAB}COPY --from=builder /out/agent /usr/local/bin/agent${TAB}USER agentsvc
+docker-final-stage-runs-as-root${TAB}FROM node:20-alpine${TAB}# final stage elided"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)
@@ -541,7 +548,11 @@ ts-untrusted-data-in-llm-system-prompt${TAB}model: \"claude-sonnet-5\"${TAB}mode
 ts-weak-hash-or-random${TAB}.update(body).digest(\"hex\")${TAB}.update(otherBody).digest(\"base64\")
 ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(otherText, { schema: yaml.DEFAULT_FULL_SCHEMA })
 py-ssrf-url-from-scanned-data${TAB}finding[\"evidence_url\"], timeout=TIMEOUT).json()${TAB}finding[\"remediation_url\"], timeout=TIMEOUT).json()
-py-failopen-on-exception${TAB}log.warning(\"could not load findings; continuing\")${TAB}log.info(\"could not load findings; retrying\")"
+py-failopen-on-exception${TAB}log.warning(\"could not load findings; continuing\")${TAB}log.info(\"could not load findings; retrying\")
+yaml-unpinned-action-ref${TAB}actions/checkout@v4${TAB}actions/cache@v4
+yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/codeql-action@v6
+docker-final-stage-runs-as-root${TAB}WORKDIR /app${TAB}WORKDIR /srv/app
+docker-final-stage-runs-as-root${TAB}RUN npm ci --omit=dev${TAB}RUN npm ci --omit=optional"
 
   # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
   # this whole gate stays green while proving nothing about it.
