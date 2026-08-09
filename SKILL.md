@@ -132,8 +132,14 @@ dimension, not a substitute for it. Install only with the user's approval (`bash
   two flags are not optional — without them a blocked version check adds ~90s per invocation.
   If the rules directory is absent, semgrep contributes **nothing**; say so rather than listing it
   as a tool that ran.
-  **Bound the claim to the rules that exist.** The set covers dimensions 2, 3, 6, 8, 11, 13, and 17 —
-  not "JS/TS security." Fifteen rules, each with a documented blind-spot list in its own header; read the
+  **Bound the claim to the rules that exist — and read the count off the directory, never off this
+  file.** The set is not "JS/TS security"; it covers a specific subset of the numbered dimensions, and
+  which subset changes whenever a rule is added. Get both facts at the moment you need them:
+  `ls scripts/semgrep-rules/*.yaml | wc -l` for the count and
+  `grep -h qr-dimension: scripts/semgrep-rules/*.yaml | sort -u` for the dimensions. Neither number is
+  written out here on purpose: a count in prose that nothing in CI checks goes stale silently and still
+  reads as current — the same argument that keeps the Exchange checklist and the OWASP mapping table out
+  of this file. Every rule carries a documented blind-spot list in its own header; read the
   header of any rule you cite before quoting it, because several deliberately trade recall for a hit
   list a human will read (`ts-weak-hash-or-random` ignores bare `Math.random()`; `ts-binds-all-interfaces`
   cannot see `listen(port)` with no host at all, which is the *commonest* real exposure).
@@ -364,6 +370,27 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      ~88% noise. `catch { }` and `catch (e) { }` are also *different patterns* to semgrep, so a rule
      that spells only one silently covers half the sites; both are matched here. When reviewing TS, ask
      the question by hand for a `catch` returning `null` — the rule deliberately will not.
+   - *A default that looks conservative can still be a defect — ask what CONSUMES it.* The two
+     questions above judge the default on its own: does the error surface, is the value permissive.
+     Neither catches the case where a **defensible** default becomes a **legal input to a classifier,
+     threshold, or evidence claim** that then asserts something the data does not support. A score
+     coerced to `0.0` on a parse failure is not permissive — `0.0` is the *least* alarming score, so a
+     reviewer correctly declines to call it a fail-open — but if a downstream branch reads that `0.0`
+     and labels the row "qualified on score", the report now carries a claim the input never
+     supported. Measured in a real submission: an unparseable EPSS value coerced to `0.0`, then a
+     three-way classifier whose `else` arm attached an "EPSS" evidence pill to a finding the same
+     report rendered as `0%` — a self-contradicting claim, from two changes that are each defensible
+     alone. The failure is not that the value is wrong; it is that **the consumer cannot distinguish a
+     coerced default from a measured one**. Two checks, both cheap: render or log the malformed input
+     and the genuine boundary value (a real `0.0`, a real `""`) side by side and confirm the outputs
+     *differ* — byte-identical output means the default needs a companion "unknown" flag, not a
+     different value; and trace the default into every branch that tests it. Expect this wherever a
+     report is assembled from third-party enrichment (EPSS/CVSS scores, KEV flags, severity strings,
+     confidence values) — each arrives as JSON that may be absent, `null`, or the wrong type, and each
+     feeds a threshold. **No rule covers this and none should be attempted**: whether `0.0` or `""` is
+     conservative or fail-open depends entirely on the consumer, and the two halves usually sit in
+     different functions. `py-failopen-on-exception` will often flag the coercion as a *maybe*; when it
+     does, the whole question is what you do with that `?` — go read the consumer.
    - *Would a silent partial failure look identical to a clean result?* (OWASP A09, and the rename
      from "logging failures" is the useful part.) Two questions, in order. **Reconstruction:** from
      the tool's own output and logs alone, can you tell what it actually scanned — which accounts,

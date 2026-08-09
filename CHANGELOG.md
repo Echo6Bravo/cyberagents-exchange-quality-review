@@ -7,6 +7,58 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`py-empty-default-decides-exclusion`** (dim 1, CWE-1288, OWASP A04:2025 Insecure Design) — the
+  **default-argument** spelling of the empty-relationship bug, which no shipped probe could see:
+  `need = TABLE.get(k, set())` followed by a set operation that decides an exclusion, so an absent key
+  makes the test unconditionally true and the row is **silently dropped** rather than excluded on the
+  merits. Found while reviewing a real cloud attack-path tool, where the drop contradicted a contract
+  stated in a comment two lines above it and nothing enforced the invariant — no assertion, and zero test
+  references to either table involved.
+  - **`empty-relationship-scan.sh` does not cover this, and its output is actively misleading about it.**
+    Measured on that submission (10 Python files): the shipped probe reports **63 hits across 13 files and
+    not one is the defect** — and it is not that the file was skipped, since it hits the defective file
+    four times, all benign. Its output reads as "this file was checked" while the one line in it that *is*
+    a dimension-1 defect is the one line it cannot see.
+  - **Grep was written and measured first, then rejected on evidence.** A naive `.get(…, set()|[]|{}|"")`
+    regex gives **60 hits on a 10-file repo** (the `""` default is nearly all display noise); requiring
+    assignment to a name cuts it to 3, all the real defect — but still 6 benign hits on a 92-file repo.
+    The decisive point is structural: grep **cannot express the discriminator at all**, because the
+    fail-*closed* counterpart (`model.get("operations", {})` immediately followed by an explicit
+    absent-key return) is textually identical to the defect. That is why this is a rule.
+  - **The near-miss is recorded in the header because it is the lesson.** The first working version caught
+    **1 of 5** spellings of its own bug class — fitted to one repo's house style while reading as coverage.
+    Ablated piecewise, and **the obvious explanation was wrong**: the load-bearing over-constraint was
+    `return ...` (excluding the `continue` spelling), not operand order. `&` is matched **commutatively**,
+    proven with a two-function probe, so a fifth arm for the reversed form was written and then **deleted
+    as inert** — an inert arm ships as apparent coverage and teaches the next reader something false.
+  - **A second silent zero, inside the rule meant to catch silent zeros.** The obvious broadening — match
+    the set operation as a bare expression inside `def $F(...)` — returns **0 findings, rc=0, `errors: []`**.
+    Cause: `...` inside a `def` **does not descend into an `if` condition**. Reusable for this whole
+    directory: if the construct lives in a conditional, match the `if` **statement**, not the expression.
+  - **Every element proven load-bearing by deletion, including one that first measured inert.** Ablating
+    the `metavariable-pattern` set/frozenset constraint left `semgrep test` **passing**, because no fixture
+    case had a non-set default reaching a set operation. A purpose-built probe showed the constraint *is*
+    load-bearing (2 findings without it, 0 with). The **fixture** was fixed, not the rule:
+    `ok_dict_default_reaches_setop` and `ok_none_default_reaches_setop` now gate it. A load-bearing element
+    no fixture exercises is an unguarded element — dimension 11 applied to this repo's own rules.
+  - **Both out-of-tree zeros are reported as bounded, not as precision.** Python-only, so the MCP corpus's
+    **1169 TS/JS files were never analysed and must never appear in its denominator**. Effective corpus
+    **14 py → 0 findings and 0 instances of the construct**, i.e. no discriminating power. On a 92-py repo,
+    **0 findings with the construct partly present** (4 `frozenset()` defaults, all accumulator unions
+    where empty is the correct identity element) — a genuine but narrow true negative. Honest claim:
+    **validated on planted-defect fixtures across 5 spellings, plus 1 real defect and 2 real true
+    negatives.** No large-corpus FP number exists for this rule; the header says so.
+  - Suite **181 → 183**: five `want=one` mutation rows (one per spelling, so `gate5b` proves each matcher
+    branch has a committed test) plus two negative controls.
+- **Dimension 3 gains the coercion-fallback shape as prose: "a default that looks conservative can still be
+  a defect — ask what CONSUMES it."** Deliberately **no rule, and none should be attempted** — the defect is
+  not the fallback but the *classifier downstream* of it, and no pattern can tell a real zero from a coerced
+  one. Measured on the same submission: a `float()` coercion helper returns `0.0` on malformed input, and the
+  `else` arm of the enrichment classifier then attaches an **"EPSS" evidence pill to a 0% row** — the report
+  asserts enrichment data it does not have, and a malformed feed renders identically to a genuine boundary
+  value. Two checks a reviewer can actually run: render the malformed input and the genuine boundary
+  **side by side and confirm they differ**, and trace the default into **every** branch that tests it.
+  Generalizes to any enrichment field where absent and lowest-value are distinct states.
 - **Two rules in the config languages — the first coverage of files that are neither Python nor
   TypeScript.** Every rule so far analysed *source*; these two analyse what ships alongside it.
   `yaml-unpinned-action-ref` (dim 18, CWE-829) flags a GitHub Actions `uses:` not pinned to a full
@@ -136,8 +188,10 @@ All notable changes to this skill are documented here. The format follows
   `pinned-vuln-scan.py` citation. **Proven by breaking it**: renaming `tautology-scan.sh` made it fail
   naming the exact path. It requires the `scripts/` prefix, which is what excludes the Exchange's own
   `validator.py` (correctly not in this repo) and is also its documented blind spot.
-- **OWASP 2025 mapping as per-rule metadata plus a pointer, deliberately not as a coverage table.** All
-  15 rules now carry an `owasp:` key; the two dimension-11 test-hygiene rules state
+- **OWASP 2025 mapping as per-rule metadata plus a pointer, deliberately not as a coverage table.** Every
+  rule now carries an `owasp:` key, enforced by **`gate2c`** rather than stated as a count here (a count in
+  prose is stale the next time a rule lands, and nothing in CI reads prose); the two dimension-11
+  test-hygiene rules state
   `no applicable category -- ...` explicitly, matching the idiom their `cwe:` field already used, because
   an absent key is indistinguishable from an unmapped one. `SKILL.md` gains a short pointer saying the
   per-category view is **derivable** (`grep owasp: scripts/semgrep-rules/*.yaml`) and that the skill is
