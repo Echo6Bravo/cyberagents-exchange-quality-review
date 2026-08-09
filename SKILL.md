@@ -755,6 +755,25 @@ carries its own failure modes. Skip with a note if the tool only reports and nev
       `sqlfluff`/`EXPLAIN`, `--dry-run`) — per file, in its own workspace, so a file that only
       validates alongside its siblings is caught. Substring checks pass on artifacts real
       parsers reject; this dimension is where "prefer proof over assertion" pays most.
+    - **Shared rendering code must not name one target.** Where a generator emits for more than
+      one provider, tenant, brand, or region, read the *shared* render path for literals naming a
+      specific one. A branch reached by every target that hardcodes the name of whichever target
+      was implemented first emits a correct instruction attributed to the wrong system — and it
+      surfaces only when the second target first reaches that branch, which is typically after the
+      first one shipped and looked fine. Real case: a cost note in provider-neutral code read
+      `Small incremental AWS cost.` and appeared inside an Azure shell script under an Azure
+      banner. **This is Low, not Critical** — no wrong scope is acted on and no emitted command
+      changes, so it does not belong with the boundary spans above; it is a credibility defect in
+      artifacts whose whole value is that an operator trusts them enough to run. Check whether the
+      data model even *has* a handle for the target at that point: where it does not, substituting
+      the name is impossible and not naming one is the only correct fix, so a review note saying
+      "make it dynamic" can be unactionable. The cheap regression guard is a test over
+      machine-derived strings for every target, asserting none names any target — symmetric across
+      all of them, not just the one that leaked, and with an assertion that some string was
+      actually examined so it cannot pass by producing nothing. Grep alone is a poor instrument
+      here: on the repo this came from, a vendor-literal search over shared code returned ten hits,
+      nine of them legitimate (a display-name table, an article-selection helper), so treat a hit
+      as a question about the render path rather than a finding.
 
 ## Output
 
