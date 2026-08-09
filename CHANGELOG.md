@@ -261,6 +261,33 @@ All notable changes to this skill are documented here. The format follows
   manifest) and requires Gate 5b to fail naming lines 43, 48, 55; it also fails loudly if the ablation
   turns out to be a no-op, so it cannot pass vacuously. It reuses the existing batch scan and manifest
   rather than re-scanning, so the proof costs no measurable wall clock. Suite: 132 → **145 tests**.
+- **Dimension 19: shared rendering code that names one target** — prose only, and the decision not to
+  build a probe for it is the substance of this entry. A generator emitting for several providers,
+  tenants, or brands can hardcode the first-implemented target's name in a branch every target reaches;
+  the artifact is then correct but attributed to the wrong system, and it only surfaces once the second
+  target first reaches that branch. Real case: a provider-neutral cost note read `Small incremental AWS
+  cost.` and rendered inside an Azure shell script under an Azure banner.
+  - **Graded Low in the bullet itself, which is why it is not with the boundary spans it sits under.**
+    Nothing acts on the wrong scope and no emitted command changes — it is a credibility defect in an
+    artifact whose value depends on an operator trusting it enough to run. Dimension 19's other entries
+    are Critical/Informational by boundary hardness, so an ungraded addition would have read as Critical
+    by proximity.
+  - **A rule was designed, measured, and rejected on the evidence.** The naive form — vendor literal in
+    shared code — returns **10 hits on the origin repo, 9 of them legitimate** (a `display_name` table,
+    an article-selection helper, catalog summary strings). Worse, the surviving hit today is the *comment
+    explaining the fix*, so the rule flags its own remediation. The real signal is relational, not
+    lexical: a vendor literal in a module **outside** any provider-scoped subpackage, where sibling
+    subpackages prove multiple providers exist. semgrep cannot express that without repo-specific
+    `paths:`, which does not generalize to an arbitrary submission — so this is prose, and the grep
+    result is stated in the bullet so a reviewer treats a hit as a question rather than a finding.
+  - **The bullet names the case where the usual review advice is unactionable.** Where the data model has
+    no handle for the target at that point in the render path — the origin bug was on a dataclass with no
+    provider reference — substituting the name is impossible and *not naming one* is the only correct
+    fix, so "make it dynamic" would send a submitter after a change they cannot make.
+  - **The regression guard is described for the submitter, not shipped here.** A test over machine-derived
+    strings for every target asserting none names any target, symmetric across all of them rather than
+    only the one that leaked, plus an anti-vacuity assertion that some string was actually examined.
+    Cheap in the repo that owns the model; not expressible as a portable probe.
 
 ### Fixed
 - **Three `SKILL.md` citations named only the Python rule after its TypeScript counterpart existed.**
