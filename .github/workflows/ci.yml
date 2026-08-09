@@ -9,6 +9,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN for every job below. Stated here rather than left to the repo
+# setting, and the distinction is the whole point: `default_workflow_permissions` is currently
+# `read` on this repo, so nothing is over-scoped TODAY -- but that setting is invisible in the
+# tree, mutable from the Settings UI or an org policy with no diff and no review, and **a fork
+# does not inherit it**. A fork gets these files and its own defaults. Dimension 18 asks other
+# submissions to make provenance explicit in the repo; this is the same claim about the token.
+#
+# `contents: read` is sufficient for all five jobs, verified rather than assumed: no job reads
+# `secrets.*`, references `GITHUB_TOKEN`/`github.token`, uploads SARIF, comments on a PR, pushes,
+# or cuts a release. The only action used is a SHA-pinned `actions/checkout`. If a future job needs
+# more (a SARIF upload needs `security-events: write`), escalate it in THAT JOB rather than
+# widening this block -- the same "never widen an exclude" rule the ruff step below follows.
+#
+# Second layer behind the pinned installers: three jobs `curl | bash` a third-party release and
+# `pip install` from PyPI, which is exactly the channel `yaml-unpinned-action-ref` warns about.
+# A read-only token bounds what a compromised installer can do with it.
+permissions:
+  contents: read
+
 jobs:
   secret-scan:
     name: Secret scan (gitleaks, full history)
