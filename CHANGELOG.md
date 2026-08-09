@@ -340,6 +340,31 @@ All notable changes to this skill are documented here. The format follows
   precise simply did not match how the code it targets is written.
 
 ### Changed
+- **`ci.yml` now declares a least-privilege `permissions: {contents: read}` at workflow level**, which
+  this repo had been leaving to an invisible repository setting while dimension 18 asks other
+  submissions to state provenance in the tree. Found by enabling GitHub's CodeQL default setup on this
+  repo, which reported `actions/missing-workflow-permissions` **five times — once per job, for one
+  missing key**.
+  - **Measured before being called a defect, and the measurement lowers the severity rather than
+    raising it:** `default_workflow_permissions` on this repo is already `read`
+    (`can_approve_pull_request_reviews: false`), so no job was over-scoped. The defect is the
+    *reliance* on a setting that is invisible in the tree, mutable from the Settings UI or an org
+    policy with no diff and no review, and **not inherited by a fork** — a fork gets these files and
+    its own defaults. Stating it in the file is what makes the intent survive all three.
+  - **`contents: read` verified sufficient for all five jobs, not assumed:** no job reads `secrets.*`,
+    references `GITHUB_TOKEN`/`github.token`, uploads SARIF, comments on a PR, pushes, or cuts a
+    release; the only action used is a SHA-pinned `actions/checkout`.
+  - **`actionlint`, which this workflow already runs on itself, is silent on this — measured, not
+    inferred:** a workflow file with no `permissions:` key at all produces no output and exit 0. A
+    missing optional key is valid schema. Same relationship `yaml-unpinned-action-ref`'s header
+    documents for ref mutability: not a gap in actionlint, a different question.
+  - **This also closes a loop `yaml-unpinned-action-ref` left open.** That rule's message tells
+    reviewers to escalate "when the workflow has `write` permissions or reads secrets" — an escalation
+    condition **no probe in this kit reports**, so the reviewer was asked to escalate on a fact nothing
+    supplied. A backlog item proposes the probe that measures it; semgrep provably cannot (the defect
+    is the *absence* of a sibling key at document scope, and three candidate spellings — including a
+    plausible-looking `pattern-not-regex`, which scopes to the matched range and not the file — each
+    fired on both a compliant and a non-compliant fixture).
 - **Every TypeScript rule now carries a measurement against real MCP-server code**, closing the one
   place this repo made a weaker claim than its Python side (Python rules were measured against 65 real
   files; the TS rules had only planted fixtures). Corpus: the official `servers` and `typescript-sdk`
