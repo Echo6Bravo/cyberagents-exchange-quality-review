@@ -505,6 +505,11 @@ py-ssrf-url-from-scanned-data${TAB}httpx.get(finding[\"callback\"], timeout=TIME
 py-failopen-on-exception${TAB}        return True${TAB}        raise RuntimeError(\"policy unreadable\")
 py-failopen-on-exception${TAB}        return []${TAB}        raise RuntimeError(\"findings unreadable\")
 py-failopen-on-exception${TAB}        pass${TAB}        raise
+py-empty-default-decides-exclusion${TAB}need_ports = SERVICE_PORTS.get(service, set())${TAB}need_ports = SERVICE_PORTS[service]
+py-empty-default-decides-exclusion${TAB}reversed_need = SERVICE_PORTS.get(service, set())${TAB}reversed_need = SERVICE_PORTS[service]
+py-empty-default-decides-exclusion${TAB}allowed = ROLE_ACTIONS.get(role, set())${TAB}allowed = ROLE_ACTIONS[role]
+py-empty-default-decides-exclusion${TAB}expected = TENANT_REGIONS.get(tenant, set())${TAB}expected = TENANT_REGIONS[tenant]
+py-empty-default-decides-exclusion${TAB}required = ROLE_ACTIONS.get(role, set())${TAB}required = ROLE_ACTIONS[role]
 ts-failopen-on-exception${TAB}    return true;${TAB}    return false;
 ts-failopen-on-exception${TAB}    return true; // bound catch: same defect, second pattern branch${TAB}    return false;
 ts-failopen-on-exception${TAB}    return [];${TAB}    throw new Error(\"scan failed\");
@@ -549,6 +554,8 @@ ts-weak-hash-or-random${TAB}.update(body).digest(\"hex\")${TAB}.update(otherBody
 ts-unsafe-deserialization${TAB}yaml.load(manifest, { schema: yaml.DEFAULT_FULL_SCHEMA })${TAB}yaml.load(otherText, { schema: yaml.DEFAULT_FULL_SCHEMA })
 py-ssrf-url-from-scanned-data${TAB}finding[\"evidence_url\"], timeout=TIMEOUT).json()${TAB}finding[\"remediation_url\"], timeout=TIMEOUT).json()
 py-failopen-on-exception${TAB}log.warning(\"could not load findings; continuing\")${TAB}log.info(\"could not load findings; retrying\")
+py-empty-default-decides-exclusion${TAB}\"no overlap with privileged actions\"${TAB}\"disjoint from privileged actions\"
+py-empty-default-decides-exclusion${TAB}SERVICE_PORTS = {\"nginx\": {80, 443}, \"sshd\": {22}}${TAB}SERVICE_PORTS = {\"httpd\": {8080}, \"sshd\": {2222}}
 yaml-unpinned-action-ref${TAB}actions/checkout@v4${TAB}actions/cache@v4
 yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/codeql-action@v6
 docker-final-stage-runs-as-root${TAB}WORKDIR /app${TAB}WORKDIR /srv/app

@@ -1,0 +1,210 @@
+# Dimension 1 (silent zeros / empty-relationship). CWE-1288.
+# Maps to OWASP 2025 A04 Insecure Design -- the defect is a design choice about what an absent
+# relationship MEANS, not a coding slip.
+#
+# WHY THIS EXISTS. `empty-relationship-scan.sh` already greps for the `or`-fallback spelling of the
+# empty-relationship bug (`ports = LOOKUP.get(iid) or set()`). The DEFAULT-ARGUMENT spelling is a
+# different token sequence and no shipped smell matches it:
+#
+#     need = SERVICE_PORTS.get(sk, set())          # <- MISSED by every existing probe
+#     if not (validated_ports & need):
+#         return ("drop", f"service {sk} listens on {sorted(need)} ...")
+#
+# The two are semantically identical, and the default-arg form is arguably worse: `.get(k, default)`
+# reads as deliberate, whereas `or set()` reads as a shortcut someone will revisit. When the default
+# is an empty collection and the value then feeds a SET OPERATION THAT DECIDES AN EXCLUSION, an absent
+# key makes the intersection unconditionally empty and the row is silently DROPPED -- the false
+# negative dimension 1 exists to catch. In the submission that prompted this rule the drop
+# contradicted a contract stated in a comment two lines above it ("surface it in a separate bucket
+# rather than either confirming it as a path or silently dropping it"), and nothing enforced the
+# invariant: no assertion, and zero test references to the two tables involved.
+#
+# WHY NOT `empty-relationship-scan.sh`, WHICH THIS KIT ALREADY RUNS. Measured on that submission
+# (10 Python files): the shipped probe reports **63 hits across 13 files and not one is the defect.**
+# It is not that the file was skipped -- the probe hits `attack_path_spec.py` four times (lines 433,
+# 457, 859x2), all benign, 859 being `(data.get("accounts") or {})` immediately followed by
+# `if not accounts: _die(...)`, i.e. correctly fail-closed. So its output reads as "this file was
+# checked" while the one line in it that IS a dimension-1 defect is the one line it cannot see. That
+# is a worse failure than silence.
+#
+# WHY GREP WAS TRIED FIRST AND REJECTED -- three measurements, in order. A fourth `SMELLS` entry was
+# written and measured before this rule was authored. Counts are raw hit lines including vendored and
+# build copies, because that is what a reviewer running the probe actually sees:
+#
+#                                          submission(10py)  repo-B(92py)  MCP corpus(14py/1169ts)
+#     shipped `or set()` ....................... 40             6              1
+#     naive `.get(..., set()|[]|{}|"")` ........ 60            18              2
+#     drop the `""` default .................... 18            16              1
+#     + must be ASSIGNED to a name ............. *3*            6              1
+#
+#   1. The naive regex is unshippable at 60 hits on a 10-file repo. Reading them shows why: the `""`
+#      default is nearly all display noise -- 7 `.get("Entity<X>", "")` sites in one file, none a
+#      decision. Dropping the string default is most of the win.
+#   2. Requiring assignment to a name (so the value feeds a LATER operation rather than being consumed
+#      inline) cuts it to 3, all of which are the real defect line -- but on repo-B it still leaves 6
+#      benign hits.
+#   3. Grep cannot express the discriminator AT ALL. The defect is not the default; it is
+#      default -> set operation -> exclusion decision. `operations = model.get("operations", {})` in
+#      repo-B is the FAIL-CLOSED counterpart: it is immediately followed by `if api.operation not in
+#      operations: return OPERATION_MISSING`, i.e. the absent key is explicitly excluded. Any
+#      line-based regex reports it identically to the real defect. That is why this is a rule.
+#
+# THE ABLATION THAT MATTERS -- THE FIRST WORKING VERSION CAUGHT 1 OF 5 SPELLINGS. Measured against
+# five variants that all express the same defect, the first draft caught only one. The cause was
+# isolated piecewise rather than guessed at, and THE OBVIOUS EXPLANATION WAS WRONG, which is why the
+# breakdown is recorded here:
+#
+#     draft arm: `def $F(...): ... if not ($X & $N): return ...`    -> 1 of 5
+#     drop the `def $F(...)` wrapper, keep `return ...`             -> 1 of 5   (wrapper irrelevant)
+#     drop `return ...`, keep the wrapper                           -> 2 of 5
+#     drop both (the shipped shape)                                 -> 2 of 5
+#
+# So the load-bearing over-constraint was **`return ...`** -- it excluded the `continue` spelling, and
+# an exclusion is an exclusion whether it returns, `continue`s, or appends to a reject list. The
+# `def $F(...)` wrapper bought nothing. Neither was about operand order:
+#
+#     if not (vp & need)          the original ................. CAUGHT
+#     if not (need & vp)          operands reversed ............ CAUGHT by the SAME arm
+#     if not (r & need): continue continue, not return ......... needed `return ...` dropped
+#     if vp.isdisjoint(need)      isdisjoint ................... needs its own arm
+#     if len(vp & need) == 0      len()==0 ..................... needs its own arm
+#     if not need.issubset(vp)    issubset ..................... needs its own arm
+#
+# **`&` is matched COMMUTATIVELY.** A fifth arm spelling `if not ($N & $A)` was written and then
+# DELETED after ablation proved it inert -- removing it changed no finding, because the `$A & $N` arm
+# already matched both orders. Verified directly with a two-function probe: one arm, both operand
+# orders, both matched. That inert arm would have shipped as apparent coverage and taught the next
+# reader something false about the engine.
+#
+# The four arms below give **5/5 spellings caught, negative controls clean, `errors: []`**, and every
+# reported line is the `.get` line rather than the `if`. A rule fitted to one repo's spelling would
+# have shipped AS COVERAGE while missing 80% of its own bug class -- this skill's dimension 1,
+# committed by the tool that grades it. THE FOUR ARMS ARE THE COVERAGE BOUND: a sixth spelling is a
+# false negative, so add an arm AND a fixture line together, never one alone -- and ablate it, because
+# one of the five candidates here turned out to be redundant.
+#
+# THE MECHANISM BEHIND THAT NEAR-MISS, AND THE REUSABLE LESSON FOR THIS WHOLE DIRECTORY. The obvious
+# broadening -- match the set operation as a bare expression inside `def $F(...)` -- returns
+# **0 findings, rc=0, `errors: []`**. A silent zero in the rule intended to catch silent zeros.
+# Ablated to the cause with a two-function probe: `...` inside a `def` block DOES NOT DESCEND INTO AN
+# `if` CONDITION. An expression-statement pattern matches `x = vp & need` (a statement) and misses
+# `if not (vp & need)` (the same expression nested in a conditional). Line 2 matched, line 7 did not.
+# **So: if the construct you care about lives in a conditional, match the `if` STATEMENT, not the
+# expression.** The verbosity below is not stylistic; it is the only spelling that works.
+#
+# MEASURED OUT-OF-TREE -- AND BOTH ZEROS ARE BOUNDED, NOT CLEAN BILLS. This rule is Python-only, so
+# the MCP corpus's 1169 TS/JS files were NEVER ANALYSED and must never appear in its denominator.
+#
+#     submission (10 py) ........... 3 findings, 0 FPs   1 real defect + 2 vendored copies of it
+#     repo-B (92 py) ............... 0 findings, 0 FPs   PARTIAL true negative -- see below
+#     MCP corpus (**14 py**) ....... 0 findings, 0 FPs   NO DISCRIMINATING POWER
+#
+# Ran this skill's own three-question drill on both zeros rather than quoting them as precision:
+#   * MCP corpus: **0 instances of the construct** -- no `set()`/`frozenset()` default in any of those
+#     14 Python files, and 0 files containing a set-op exclusion. This zero says NOTHING about the
+#     rule. Quoting it as "0 FPs on 1183 files" would be the dimension-12 overclaim this kit grades,
+#     and doubly wrong since 1169 of those files are a language the rule does not read.
+#   * repo-B: the construct IS partly present -- 4 `frozenset()`-default sites (2 unique, 2 duplicated
+#     under `build/`), 0 set-op exclusions. Read all of them:
+#     `operations[name] = operations.get(name, frozenset()) | methods` -- accumulator unions, where an
+#     empty default is the correct IDENTITY ELEMENT and no exclusion follows. Correct silence on a real
+#     instance of the construct, which makes this a genuine if narrow true negative.
+#
+# So the honest claim is: **validated on planted-defect fixtures across 5 spellings, plus 1 real defect
+# and 2 real true negatives.** No large-corpus FP number exists for this rule; do not imply one.
+#
+# KNOWN FALSE POSITIVES (triage by reading):
+#   * an accumulator union (`d[k] = d.get(k, set()) | more`) -- empty is the identity element and no
+#     exclusion follows. Not matched today because no `if` consumes the name, but a future arm could
+#     reach it; the fixture pins it as a must-NOT-match.
+#   * a genuinely optional constraint, where "no entry" really does mean "unconstrained". That is a
+#     design decision, and the finding is then the *missing documentation* of it, not the code.
+#
+# KNOWN BLIND SPOTS -- read before trusting a zero:
+#   * `[]`, `{}`, `""` and `0` defaults are NOT matched. Only `set()`/`frozenset()`, because the
+#     exclusion arms below are all set operations. A list default feeding `if not (a & b)` is a
+#     TypeError, not a defect; a dict default feeding a membership test is a different shape and was
+#     left out deliberately rather than guessed at.
+#   * the guard exclusion recognises only `if $K not in $D:`. A `try/except KeyError`, an early
+#     `raise`, or `if not $D.get($K)` will still be reported. Each needs its own arm AND its own
+#     negative-control fixture line before it can be claimed.
+#   * cross-function flow is invisible: a default returned by one function and excluded by its caller
+#     is not matched, and no intraprocedural rule can see it.
+#   * the `.get` and the `if` must sit in the SAME enclosing block, since `pattern-inside` anchors on
+#     the assignment. A default set in an `__init__` and consumed in a method is missed.
+rules:
+  - id: py-empty-default-decides-exclusion
+    languages: [python]
+    severity: WARNING
+    message: >-
+      dim1: this `.get()` defaults to an EMPTY collection, and the result then decides an exclusion via
+      a set operation -- so an absent key makes that test unconditionally true and the row is silently
+      DROPPED rather than excluded on the merits. That is a false negative, not a filter: the caller
+      cannot tell "this did not match" from "this key was never in the table". It is the same defect
+      `empty-relationship-scan.sh` looks for in its `or set()` spelling, which does not match this one.
+      Fix by deciding what an absent key MEANS and saying so in code -- raise/`KeyError` if the table is
+      supposed to be total, or route the row to an explicit review bucket if it is not; then add a test
+      asserting the table covers every key that can reach it (an invariant no reviewer will re-derive).
+      Two shapes land here legitimately: an accumulator union, where empty is the identity element, and
+      a genuinely optional constraint -- in which case the finding is the undocumented design decision.
+      Note what this CANNOT see: only `set()`/`frozenset()` defaults, only five `if` spellings, and only
+      within one function -- so a clean run is not proof.
+    metadata:
+      qr-dimension: 1
+      cwe: "CWE-1288: Improper Validation of Consistency within Input"
+      owasp: "A04:2025 Insecure Design"
+      confidence: MEDIUM
+    patterns:
+      - pattern: $N = $D.get($K, $EMPTY)
+      # Constrains the default to an EMPTY SET. Load-bearing, and measured -- but note HOW, because the
+      # first measurement of it was wrong: ablating this clause left `semgrep test` PASSING, since no
+      # fixture case had a non-set default reaching a set operation. Measured directly instead, on a
+      # purpose-built probe: removing it makes the rule fire on `T.get(k, {})` and `T.get(k, None)`
+      # feeding the same exclusion (2 findings vs 0). Both are a runtime TypeError rather than a silent
+      # drop, so they are out of scope by design. `ok_dict_default_reaches_setop` and
+      # `ok_none_default_reaches_setop` were then added to the fixture so this clause is GATE-ENFORCED
+      # and not merely believed -- a load-bearing element no fixture exercises is an unguarded element.
+      - metavariable-pattern:
+          metavariable: $EMPTY
+          patterns:
+            - pattern-either:
+                - pattern: set()
+                - pattern: frozenset()
+      # The exclusion arms. These MUST be `if` statements, not bare expressions -- see the header:
+      # `...` does not descend into an `if` condition, and the expression form measures 0 findings
+      # with rc=0 and an empty `errors` array. Each arm is one real spelling of the same defect; the
+      # four together are the rule's coverage bound (5 spellings, 4 arms -- the `&` arm covers both
+      # operand orders; a fifth arm for the reversed form was measured INERT and deleted).
+      - pattern-either:
+          # Covers BOTH operand orders: semgrep matches `&` commutatively. Measured by ablation -- a
+          # separate `if not ($N & $A):` arm was written, then deleted after the fixture proved it
+          # INERT (dropping it changed nothing, because this arm already matched the reversed
+          # spelling). Do not re-add it.
+          - pattern-inside: |
+              $N = $D.get($K, $EMPTY)
+              ...
+              if not ($A & $N):
+                  ...
+          - pattern-inside: |
+              $N = $D.get($K, $EMPTY)
+              ...
+              if $A.isdisjoint($N):
+                  ...
+          - pattern-inside: |
+              $N = $D.get($K, $EMPTY)
+              ...
+              if len($A & $N) == 0:
+                  ...
+          - pattern-inside: |
+              $N = $D.get($K, $EMPTY)
+              ...
+              if not $N.issubset($A):
+                  ...
+      # A preceding membership guard means the absent key is ALREADY excluded, so the empty default is
+      # unreachable and the code is correct. Load-bearing: without it the fail-closed fixture case
+      # fires (measured -- findings went from [3] to [3, 12]).
+      - pattern-not-inside: |
+          if $K not in $D:
+              ...
+          ...
+          $N = $D.get($K, $EMPTY)
