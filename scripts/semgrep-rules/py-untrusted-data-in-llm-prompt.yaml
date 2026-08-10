@@ -1,0 +1,116 @@
+# Dimension 13 (indirect prompt injection), the PYTHON channel. CWE-1427.
+#
+# WHY THIS EXISTS, and why it is not a duplicate of the TS sibling. `ts-untrusted-data-in-llm-system-
+# prompt` covers the same dimension for JS/TS and explicitly names "the Python SDK" as a DELIBERATE
+# blind spot -- deferred until a Python false-positive rate could be measured. This rule closes that
+# gap. `bandit` and `ruff` have no concept of an LLM call, so nothing else in the toolkit asks whether
+# untrusted data is spliced into a prompt; the shape is defined by an SDK's argument structure, not by
+# a dangerous builtin, so it is genuinely rule-shaped rather than greppable (`system=` appears in every
+# correct call too).
+#
+# THREE SHAPES, three SDK vocabularies for one defect -- untrusted text reaching the model as
+# INSTRUCTIONS rather than as fenced, labelled user data:
+#   1. Anthropic `messages.create(system=...)` -- the top-level system channel.
+#   2. OpenAI / chat `{"role": "system", "content": ...}` -- the same channel, a message-dict spelling.
+#   3. A local / completion call (llama-cpp `Llama.__call__`, `create_completion`, a passed-in `llm`)
+#      that takes the WHOLE prompt as one string. This is the AI Goat challenge-1 shape, the worked
+#      example this rule was derived from: `llm("Instruction: "+instruction+" Question: "+question+
+#      " Answer:", max_tokens=1000, ...)`. There is no system channel at all here -- the instructions,
+#      the trusted rules, and the untrusted question are one flat string, which is the WORST case,
+#      because the model cannot even in principle tell the operator's rules from the attacker's input.
+#
+# WHY THE COMPLETION BRANCH KEYS ON `max_tokens=` (READ BEFORE WIDENING IT). A raw completion call is
+# syntactically just `f(string, ...)` -- indistinguishable from logging, string building, or any other
+# function. Matching `$F("..." + $X)` unqualified would flag every `print`, `logging.info`, and
+# `os.path.join` in the repo. To bound that, the completion branch fires only when the call ALSO carries
+# a `max_tokens=` argument -- a near-universal generation kwarg (llama-cpp, OpenAI legacy completions,
+# most local wrappers) that logging and string builders never have. It is a heuristic discriminator,
+# not a guarantee: a completion call written WITHOUT `max_tokens` (e.g. relying on the default) is a
+# documented MISS below, not a silent one. Do not drop the `max_tokens=` qualifier without re-measuring
+# the false-positive rate -- it is the whole reason this branch is safe to ship.
+#
+# INTERPOLATION SENSITIVITY, measured the same way the SSRF and TS rules were: a `"..." + $X` /
+# `$X + "..."` pattern matches a concat that mixes a literal with a NON-literal, while an all-literal
+# concat is spared by a `pattern-not` (below). An f-string pattern `f"...{...}..."` matches an f-string
+# that HAS an interpolation and not a static one. Both spellings are the ones people actually write, so
+# both are covered.
+#
+# KNOWN FALSE POSITIVES (measured on the fixture; triage by reading -- the question is specific):
+#   * interpolating something the TOOL controls, not scanned data: a model name, a hardcoded rule list,
+#     a tenant id from config, the current date. These are real FPs and likely the majority of hits on
+#     a well-written repo. The triage question is NOT "is anything interpolated" but "can the owner of
+#     the scanned asset write any part of what reaches this string." A resource NAME is attacker-
+#     controlled; a resource COUNT is not. Same discipline as the TS sibling.
+#   * a system prompt assembled from an operator-authored config file -- trusted-ish, but worth asking
+#     who may edit that file and whether the tool re-reads it from a repo it also scans.
+#
+# KNOWN BLIND SPOTS (documented so a zero is never read as proof):
+#   * a prompt built in a variable and passed by name (`system=prompt`, `llm(prompt)`) -- the splice
+#     happened a statement or a function call away, where no single expression holds both the channel
+#     and the untrusted value. This is the same interprocedural limit every lexical rule here has, and
+#     it is the COMMON real shape, so a zero from this rule proves nothing on its own. Read the
+#     prompt-assembly path by hand; this rule is a tripwire, not a proof.
+#   * a completion call with no `max_tokens=` (see above) -- deliberately not matched.
+#   * `.append()`/loop-built message arrays, and prompts rendered by a templating library (Jinja,
+#     LangChain PromptTemplate) -- no matchable literal at the sink.
+#   * the OpenAI `developer` role (newer naming) rather than `system`.
+#   * `str.format()` and `%`-formatting into a prompt -- rarer than concat/f-string for this shape and
+#     not matched this pass; add sinks as real submissions surface them rather than speculatively.
+#
+# WHY NOT `mode: taint`: same reason as the sibling Python rules -- default taint mode is
+# intraprocedural and does not cross the helper boundary real code always has, and interprocedural
+# analysis needs Semgrep Pro (login-gated binary, unavailable behind a TLS-intercepting proxy). Do not
+# "improve" this into taint mode without re-measuring.
+#
+# NO CORPUS FALSE-POSITIVE RATE YET. Unlike the TS sibling (0 findings across 1074 real MCP-server
+# files), this rule is validated on planted-defect fixtures ONLY -- no large Python LLM-app corpus was
+# available at authoring time. State it that way in any report: "validated on fixtures, corpus FP rate
+# unmeasured," not "0 false positives."
+rules:
+  - id: py-untrusted-data-in-llm-prompt
+    languages: [python]
+    severity: ERROR
+    message: >-
+      dim13: data is spliced into an LLM prompt/system channel by concatenation or f-string. If any
+      part of it comes from a scanned asset -- a resource name, tag, description, commit message, or a
+      user question -- then whoever controls that asset is writing into the channel the model treats as
+      instructions, which is prompt injection. It is worst in a flat completion prompt, where the
+      operator's rules and the attacker's text are one indistinguishable string. Dimension 13 rates
+      this High when the model's output drives an action (a tool call, a generated script) rather than
+      only a report. Fix by moving untrusted data into a separate user turn, fenced and labelled
+      untrusted, and keeping the instruction/system text static. Triage question: not "is something
+      interpolated" but "can the owner of the scanned asset write any of it."
+    metadata:
+      qr-dimension: 13
+      cwe: "CWE-1427: Improper Neutralization of Input Used for LLM Prompting"
+      owasp: "A05:2025 Injection (prompt injection)"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # --- Shape 1: Anthropic top-level `system=` kwarg. `$CLIENT` binds a dotted receiver, so
+          # both `client.messages.create(...)` and `self.client.messages.create(...)` match.
+          - pattern: $CLIENT.messages.create(..., system="..." + $X, ...)
+          - pattern: $CLIENT.messages.create(..., system=$X + "...", ...)
+          - pattern: $CLIENT.messages.create(..., system=f"...{...}...", ...)
+          # --- Shape 2: OpenAI / chat message-dict with role "system". Semgrep matches the literal
+          # structurally, so single- and double-quoted keys both match.
+          - pattern: '{..., "role": "system", ..., "content": "..." + $X, ...}'
+          - pattern: '{..., "role": "system", ..., "content": $X + "...", ...}'
+          - pattern: '{..., "role": "system", ..., "content": f"...{...}...", ...}'
+          # --- Shape 3: local / completion call taking the whole prompt as one string, discriminated
+          # by a `max_tokens=` generation kwarg (see header -- this is what keeps the branch from
+          # matching every function call). Covers the AI Goat llama-cpp `llm("..."+q+"...", max_tokens=)`
+          # shape and `create_completion(prompt=...)`-style wrappers alike.
+          - pattern: $LLM("..." + $X, ..., max_tokens=$N, ...)
+          - pattern: $LLM($X + "...", ..., max_tokens=$N, ...)
+          - pattern: $LLM(f"...{...}...", ..., max_tokens=$N, ...)
+          - pattern: $LLM(..., prompt="..." + $X, ..., max_tokens=$N, ...)
+          - pattern: $LLM(..., prompt=$X + "...", ..., max_tokens=$N, ...)
+          - pattern: $LLM(..., prompt=f"...{...}...", ..., max_tokens=$N, ...)
+      # An all-literal concat split only to satisfy a line-length limit is the RECOMMENDED shape, not a
+      # defect, and `"..." + $X` matches it because a literal is a fine `$X`. These spare the all-literal
+      # forms while still catching a mixed chain like `"Rules. " + finding_desc`. Ablation-tested: drop
+      # one and the corresponding OK line in the fixture fires.
+      - pattern-not: $CLIENT.messages.create(..., system="..." + "...", ...)
+      - pattern-not: $LLM("..." + "...", ..., max_tokens=$N, ...)
+      - pattern-not: $LLM(..., prompt="..." + "...", ..., max_tokens=$N, ...)

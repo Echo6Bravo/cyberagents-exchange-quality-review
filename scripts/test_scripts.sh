@@ -540,7 +540,28 @@ yaml-unpinned-action-ref${TAB}actions/setup-python@v5${TAB}actions/setup-python@
 yaml-unpinned-action-ref${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e6${TAB}some-org/truncated@8f152de45cc393bb48ce5d89d36b731f54556e65
 yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/super-linter@8f152de45cc393bb48ce5d89d36b731f54556e65
 docker-final-stage-runs-as-root${TAB}COPY --from=builder /out/agent /usr/local/bin/agent${TAB}USER agentsvc
-docker-final-stage-runs-as-root${TAB}FROM node:20-alpine${TAB}# final stage elided"
+docker-final-stage-runs-as-root${TAB}FROM node:20-alpine${TAB}# final stage elided
+sh-unpinned-package-install${TAB}pip3 install requests validators${TAB}pip3 install -r requirements.txt
+sh-unpinned-package-install${TAB}pip install flask-cors${TAB}pip install flask-cors==4.0.0
+sh-unpinned-package-install${TAB}install tqdm${TAB}install tqdm==4.66.3
+sh-unpinned-package-install${TAB}gcc-11 g++-11 python3-pip -y${TAB}nginx=1.24.0-1
+sh-unpinned-package-install${TAB}apt install curl${TAB}apt install curl=7.88.1
+sh-unpinned-package-install${TAB}apk add openssl${TAB}apk add openssl=3.1.4-r5
+sh-unpinned-package-install${TAB}resolve/main/${TAB}resolve/0c42ebe3d411ec4e24259cefb06dcc322279c7aa/
+sh-unpinned-package-install${TAB}run pip install foo${TAB}run the service
+sh-unpinned-package-install${TAB}apt-get install nginx${TAB}installing nginx
+py-untrusted-data-in-llm-prompt${TAB}system=\"You are a triage bot. \" + finding_desc${TAB}system=\"You are a triage bot. Be concise.\"
+py-untrusted-data-in-llm-prompt${TAB}system=finding_desc + \" -- follow the above.\"${TAB}system=\"Static rules -- follow the above.\"
+py-untrusted-data-in-llm-prompt${TAB}system=f\"Triage rules. Context: {resource_name}\"${TAB}system=\"Triage rules. Context: redacted\"
+py-untrusted-data-in-llm-prompt${TAB}\"content\": \"Answer safely. \" + question${TAB}\"content\": \"Answer safely. Be brief.\"
+py-untrusted-data-in-llm-prompt${TAB}\"content\": f\"Answer safely. User asks: {question}\"${TAB}\"content\": \"Answer safely.\"
+py-untrusted-data-in-llm-prompt${TAB}\"Instruction: \" + instruction + \" Question: \" + question + \" Answer:\"${TAB}\"Instruction: greet. Answer:\"
+py-untrusted-data-in-llm-prompt${TAB}llm(question + \" -- answer the question above.\"${TAB}llm(\"Answer the question above.\"
+py-untrusted-data-in-llm-prompt${TAB}f\"Instruction: be helpful. Question: {question} Answer:\"${TAB}\"Instruction: be helpful. Answer:\"
+py-untrusted-data-in-llm-prompt${TAB}prompt=\"Summarise the following. \" + doc_text${TAB}prompt=\"Summarise the following.\"
+py-untrusted-data-in-llm-prompt${TAB}prompt=f\"Summarise the following: {doc_text}\"${TAB}prompt=\"Summarise nothing in particular.\"
+py-unchecked-subprocess-result${TAB}result = subprocess.run(cmd, capture_output=True, text=True)${TAB}result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+py-unchecked-subprocess-result${TAB}return_code = process.poll()${TAB}return_code = process.wait()"
   # NEGATIVE CONTROLS: mutate the VALUE, never the credential-shaped key. The rule must STILL fire
   # on every line. A rule that stops firing here is matching something incidental about the file.
   NCS="ts-token-in-localstorage${TAB}localStorage.setItem(\"access_token\", accessToken)${TAB}localStorage.setItem(\"access_token\", tokenFromParam)
@@ -559,7 +580,13 @@ py-empty-default-decides-exclusion${TAB}SERVICE_PORTS = {\"nginx\": {80, 443}, \
 yaml-unpinned-action-ref${TAB}actions/checkout@v4${TAB}actions/cache@v4
 yaml-unpinned-action-ref${TAB}github/super-linter@v6${TAB}github/codeql-action@v6
 docker-final-stage-runs-as-root${TAB}WORKDIR /app${TAB}WORKDIR /srv/app
-docker-final-stage-runs-as-root${TAB}RUN npm ci --omit=dev${TAB}RUN npm ci --omit=optional"
+docker-final-stage-runs-as-root${TAB}RUN npm ci --omit=dev${TAB}RUN npm ci --omit=optional
+sh-unpinned-package-install${TAB}requests validators${TAB}httpx anyio
+sh-unpinned-package-install${TAB}resolve/main/ggml-old-vic13b-q4_0.bin${TAB}resolve/main/pytorch_model.bin
+py-untrusted-data-in-llm-prompt${TAB}\" + finding_desc, messages=msgs${TAB}\" + other_scanned_field, messages=msgs
+py-untrusted-data-in-llm-prompt${TAB} Question: \" + question + \" Answer:\"${TAB} Question: \" + user_msg + \" Answer:\"
+py-unchecked-subprocess-result${TAB}print(\"[+] started\")${TAB}print(\"[+] launched\")
+py-unchecked-subprocess-result${TAB}print(happy_msg)${TAB}print(status_line)"
 
   # Every rule must appear in MUTS -- otherwise 3d can add a rule with no mutation coverage and
   # this whole gate stays green while proving nothing about it.

@@ -1,0 +1,131 @@
+# Dimension 3 (failure behaviour), the HAPPY-PATH fail-open. CWE-252 / CWE-636 / CWE-703.
+# Maps to OWASP 2025 A10 Mishandling of Exceptional Conditions.
+#
+# WHY THIS EXISTS, and why it is NOT a duplicate of py-failopen-on-exception. That rule catches a fail-
+# open in the EXCEPT handler -- the error is raised and swallowed into a permissive return. This rule
+# catches the fail-open that never raises at all: a subprocess is launched, it FAILS (non-zero exit),
+# and the caller returns success anyway because it never inspected the exit status. No exception is
+# thrown, so the exception rule cannot see it; the defect is a MISSING check, not a mishandled one.
+#
+# The worked example is AI Goat's `runner.py`. `Runner.run` polls the child
+# (`return_code = process.poll()`), branches only on `is not None` -- i.e. "has it FINISHED" -- and
+# then unconditionally `return True`, never once testing whether `return_code` is zero. So
+# `docker compose up` failing and `docker compose up` succeeding both return True, and every caller
+# (`challenge_1`, `challenge_2`, `ctfd`) reports the challenge started when it did not. The sibling
+# `check_llm_status` in the SAME file does it correctly (`if result.returncode > 0: ... exit()`),
+# which is the tell that the omission in `run` is a bug, not a house style.
+#
+# TWO SHAPES, both measured to match and both with the correct sibling correctly SPARED:
+#   1. `subprocess.run(...)` assigned to a variable whose `.returncode` (or `.check_returncode()`) is
+#      never referenced before a `return True`. This is the common spelling and the low-FP one.
+#   2. a `poll()` loop that breaks on `is not None` and returns True below the loop, with the polled
+#      value never branched on by a `!= 0 / == 0 / > 0 / if $RC:` test. This is the AI Goat `run`
+#      shape exactly.
+#
+# NOTHING ELSE IN THE TOOLKIT ASKS THIS. `bandit` has subprocess rules (B603/B607) but they are about
+# shell=True and untrusted argv, not about ignoring the exit code. `ruff` flags none of this class.
+# The specific question "did anyone check whether the process actually succeeded" is unasked elsewhere.
+#
+# KNOWN FALSE POSITIVES (measured on the fixture; triage by reading):
+#   * a subprocess whose failure genuinely does not matter -- a best-effort `touch`, a metrics ping, a
+#     cache warm. Returning success without checking is defensible there. The triage question is "does
+#     a downstream decision assume this subprocess succeeded." If yes, the missing check is a defect.
+#   * `check=True` on `subprocess.run` RAISES on non-zero, so the exit code IS handled (by conversion
+#     to an exception, which py-failopen-on-exception then governs). Excluded below.
+#
+# KNOWN BLIND SPOTS (documented so a zero is never read as proof):
+#   * the returncode checked in a helper (`_ok(result)`) a call away -- interprocedural, invisible, the
+#     same limit every lexical rule here has.
+#   * `os.system()` (returns the code as an int with no object to inspect), `Popen(...).wait()` whose
+#     result is discarded, and `run(...).returncode` compared with an operator this rule does not list.
+#   * a `return` of something other than the literal `True` (a permissive object, a status string).
+#     Kept narrow on purpose: a broad "returns after subprocess" rule would fire on almost everything.
+#
+# WHY NOT taint / dataflow: the defect is the ABSENCE of a check, which taint cannot express, and the
+# structural `pattern-not-inside` exclusions are exactly the right tool -- they spare the code that
+# DOES branch on the value. Measured: dropping any exclusion below makes the corresponding checked
+# function in the fixture fire.
+rules:
+  - id: py-unchecked-subprocess-result
+    languages: [python]
+    severity: ERROR
+    message: >-
+      dim3: a subprocess is run and success is returned without ever checking its exit status. A
+      non-zero exit (the command failed) is reported to the caller as success -- a fail-open on the
+      happy path, with no exception raised to notice. `poll()`/`is not None` only tells you the child
+      FINISHED, not that it SUCCEEDED; `subprocess.run(...)` returns a result whose `.returncode` must
+      be read. Fix by branching on the exit code (raise / return False on non-zero), or use
+      `subprocess.run(..., check=True)` so a failure becomes an exception. Triage question: does any
+      downstream decision assume this process succeeded? If so, the missing check is the defect.
+    metadata:
+      qr-dimension: 3
+      owasp: "A10:2025 Mishandling of Exceptional Conditions"
+      cwe: "CWE-252: Unchecked Return Value"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # Shape 1: subprocess.run result, returncode never inspected before a success return.
+          # The exclusions are `pattern-not` (full-span), not `-inside`: the value check sits BETWEEN
+          # the run and the return, so it belongs in the same matched region, not wrapped around it.
+          # Measured: with `-inside` the checked sibling in the fixture fires; with `pattern-not` it is
+          # spared. Each exclusion was ablation-tested -- drop one and its OK function fires.
+          - patterns:
+              - pattern: |
+                  $RES = subprocess.run(...)
+                  ...
+                  return True
+              - pattern-not: |
+                  $RES = subprocess.run(..., check=True, ...)
+                  ...
+                  return True
+              # Deep-expression `<... $RES.returncode ...>` is REQUIRED here: the value check is
+              # written `if $RES.returncode > 0:`, so `.returncode` lives inside the `if` condition,
+              # not as its own statement. A bare `$RES.returncode` statement pattern does NOT match it
+              # (measured: the checked sibling fired). This form matches the reference wherever it sits.
+              - pattern-not: |
+                  $RES = subprocess.run(...)
+                  ...
+                  if <... $RES.returncode ...>:
+                      ...
+                  ...
+                  return True
+              - pattern-not: |
+                  $RES = subprocess.run(...)
+                  ...
+                  $X = $RES.returncode
+                  ...
+                  return True
+              - pattern-not: |
+                  $RES = subprocess.run(...)
+                  ...
+                  $RES.check_returncode()
+                  ...
+                  return True
+          # Shape 2: a poll() loop that returns True below it, exit value never branched on. The
+          # `pattern-not-inside` forms below spare a loop that DOES test the polled value. The leading
+          # `...` lets an intervening statement (a log/print) sit between the loop and the return, which
+          # is the exact AI Goat spelling.
+          - patterns:
+              - pattern: |
+                  while True:
+                      ...
+                      $RC = $P.poll()
+                      ...
+                  ...
+                  return True
+              - pattern-not-inside: |
+                  ...
+                  if $RC != 0:
+                      ...
+              - pattern-not-inside: |
+                  ...
+                  if $RC == 0:
+                      ...
+              - pattern-not-inside: |
+                  ...
+                  if $RC > 0:
+                      ...
+              - pattern-not-inside: |
+                  ...
+                  if $RC:
+                      ...

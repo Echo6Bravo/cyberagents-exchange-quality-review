@@ -364,7 +364,19 @@ Every one of these should also be a **CI gate** so it can't regress (see dimensi
      blind except — none of them distinguish a fail-open in a security decision from a benign one,
      which is the entire question, and neither tool can parse TS at all. It also cannot: a
      `return []` that legitimately means "no cached rows" is a finding to triage, not a defect, and
-     permissive `{}`/`0`/`None` returns are outside the rule's reach. **The TS rule's narrowness is a
+     permissive `{}`/`0`/`None` returns are outside the rule's reach.
+     **A sibling shape fails open with no exception at all**, so the rule above cannot see it:
+     a subprocess is launched, it *fails* (non-zero exit), and the caller returns success anyway
+     because it never inspected the exit status. `py-unchecked-subprocess-result` catches the two
+     common spellings — a `subprocess.run(...)` whose `.returncode` is never read before a `return
+     True`, and a `poll()` loop that breaks on `is not None` (has it *finished*, not has it
+     *succeeded*) and returns True below. The worked example is AI Goat's `runner.run`, whose correct
+     sibling `check_llm_status` in the same file *does* test `returncode` — the tell that the omission
+     is a bug, not house style. `bandit`'s subprocess rules (B603/B607) ask about `shell=True` and
+     untrusted argv, never about a discarded exit code, so nothing else here asks it. The triage
+     question is **does a downstream decision assume this process succeeded** — a best-effort `touch`
+     or metrics ping that legitimately does not care is a triage item, not a defect, and `check=True`
+     (which raises on non-zero) is correctly spared. **The TS rule's narrowness is a
      measurement, not an oversight** — across 1074 real MCP-server files the permissive `catch` returns
      were `null` 18, `undefined` 11, `[]` 4, `true` 0, so matching the nullish pair would have made it
      ~88% noise. `catch { }` and `catch (e) { }` are also *different patterns* to semgrep, so a rule
@@ -586,10 +598,15 @@ frequently the highest-impact dimensions — not optional add-ons.
     ("ignore prior instructions and …") and confirm the agent fences/ignores it. Untrusted
     content should be delimited/labeled as data, never merged into the instruction channel.
     `semgrep-rules/ts-untrusted-data-in-llm-system-prompt` flags interpolation into the TS SDKs'
-    `system:` channel (Anthropic and OpenAI shapes). The triage question is **not** "is something
-    interpolated" but "can the owner of the scanned asset write any of it" — a resource *name* is
-    attacker-authored, a resource *count* is not. Zero hits proves little: a prompt assembled in a
-    variable and passed by name is invisible to it, which is how most real code is written.
+    `system:` channel (Anthropic and OpenAI shapes), and `py-untrusted-data-in-llm-prompt` is the Python
+    counterpart — the Anthropic `system=` kwarg, an OpenAI `{"role": "system", …}` dict, and a flat
+    completion call keyed on a `max_tokens=` discriminator (the AI Goat challenge shape, where scanned
+    text is concatenated into `"Instruction: " + … + " Answer:"`). The triage question is **not** "is
+    something interpolated" but "can the owner of the scanned asset write any of it" — a resource *name*
+    is attacker-authored, a resource *count* is not. Zero hits proves little: a prompt assembled in a
+    variable and passed by name is invisible to it, which is how most real code is written, and the
+    Python rule has **no large-corpus false-positive rate yet — it is validated on planted-defect
+    fixtures only**, so treat a hit as a question and read the call.
     **Now ask the same question backwards: what does the hidden context give AWAY?** Injection is data
     getting *into* the instruction channel; this is the reverse direction, and the rules above are blind
     to it. Assume the system prompt, developer instructions, retrieved policy text, and **every tool/
@@ -713,9 +730,17 @@ frequently the highest-impact dimensions — not optional add-ons.
     `gcr.io/distroless/base-debian12` defaults to root, and only the `:nonroot` tag drops privilege.
     Finally, semgrep silently skips `Dockerfile.dev`,
     `Dockerfile.prod` and `Containerfile`, so copy such a file to `Dockerfile` before scanning.
-    **OS packages installed inside a Dockerfile are this dimension's defect too**: `apt-get install
-    <pkg>` with no version, or `pip install <pkg>` with no `==`, is the same unpinned dependency the
-    prose above grades, and no rule or probe here checks it — read the `RUN` lines by hand.
+    **OS packages installed inside a Dockerfile or shell script are this dimension's defect too**:
+    `apt-get install <pkg>` with no version, or `pip install <pkg>` with no `==`, is the same unpinned
+    dependency the prose above grades. `sh-unpinned-package-install` now flags the common spellings
+    (`pip`/`pip3`/`python -m pip` with no `==`, `apt`/`apt-get`/`apk` with no `=version`, plus a moving
+    model reference — a Hugging Face `resolve/main/` or `resolve/master/` URL) in both `*.sh` and
+    Dockerfiles. It runs in **generic mode**, so its blind spots are the generic-mode ones and are
+    stated in the rule header: it is line-oriented (an install split across a backslash-continued line
+    is invisible), it keys on literal command text so an install behind a shell variable (`pip install
+    "$PKG"`) or a wrapper function is missed, and it deliberately does **not** flag range specifiers
+    (`foo>=1.0`) or the `conda`/`poetry`/`npm`/`gem` install verbs — so a zero is not proof, and the
+    remaining `RUN`/install lines still want a read by hand where it matters.
 
 ### Generated-artifact dimensions (apply when the tool EMITS something a human or CI then runs)
 Applies to generated remediation scripts, IaC, SQL, playbooks, or config — anything the tool

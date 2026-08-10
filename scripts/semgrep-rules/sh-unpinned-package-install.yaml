@@ -1,0 +1,98 @@
+# Dimension 18 (supply-chain provenance), the shell/Dockerfile channel. CWE-1357 / CWE-829.
+#
+# WHY THIS EXISTS. Dimension 18 grades whether packages, images and models are pinned to immutable
+# versions. `pinned-vuln-scan.py` reads dependency MANIFESTS (requirements.txt, package.json), and
+# `yaml-unpinned-action-ref` reads workflow `uses:` refs. Neither sees the install that happens
+# inside a shell script or a Dockerfile `RUN`. That is a real and common spelling of the same defect:
+# a container `entrypoint.sh` that does `pip3 install requests validators` at start-up, or a
+# Dockerfile that does `apt-get install gcc-11 python3-pip`, resolves to whatever the index serves
+# THAT DAY -- non-reproducible, and silently drifting onto a yanked or backdoored release. The AI Goat
+# review (challenge 2's entrypoint, `pip3 install requests validators`; the base Dockerfile's
+# unversioned `apt-get install`) is the worked example this rule was derived from.
+#
+# A THIRD SHAPE, model provenance: a Hugging Face / model URL that pulls from `/resolve/main/` (or any
+# branch ref) is the model-registry equivalent of `@main` -- a moving pointer with no revision or
+# digest. Dimension 18's prose calls out models and datasets explicitly as dependencies; this catches
+# the most common URL spelling. It does NOT prove a pinned revision is SAFE (that is the "pinned but
+# vulnerable" half of dimension 18, and no advisory DB exists for model blobs) -- only that the
+# reference is immutable.
+#
+# WHY GENERIC MODE. The sinks live in shell and Dockerfiles, which `ruff`/`bandit` cannot parse at
+# all, and semgrep has no first-class `bash`/`dockerfile` deep analysis for this shape. `generic` mode
+# with `pattern-regex` matches the raw text, which is exactly right for a lexical "is there a version
+# next to this package name" question. The regexes run multiline (`(?m)`) so each is a per-line test.
+#
+# WHY THESE ARE `WARNING`, NOT `ERROR`. Same reasoning as `yaml-unpinned-action-ref`: unpinned installs
+# are the ecosystem default, so ERROR trains reviewers to ignore the finding. Dimension 18 escalates
+# when the artifact is published and the install runs with network access to a public index at deploy
+# or run time (the entrypoint case is worse than the build case, because it re-resolves on every
+# container start). That judgement needs a human; the message says so.
+#
+# OVERLAP, and why this is additive not duplicative. `hadolint` (not in this kit) flags DL3008/DL3013
+# for the Dockerfile forms; we do not run it, and it says nothing about shell scripts or model URLs.
+# `bandit`/`ruff` do not parse either file type. `pinned-vuln-scan.py` reads manifests only. So the
+# "unversioned install in a script or Dockerfile" question is asked by nothing else in this toolkit.
+#
+# KNOWN FALSE POSITIVES (triage by reading):
+#   * `pip install -r requirements.txt` / `-e .` / a local `*.whl` or `*.tar.gz` path -- the versions
+#     live in the referenced manifest or artifact, so these are excluded below. Ablation-tested: each
+#     exclusion is load-bearing (drop it and the corresponding OK line in the fixture fires).
+#   * `apt-get install`/`apk add` of a package that is legitimately floating because the base image is
+#     itself pinned by digest and the team rebuilds deliberately -- a defensible choice, but still a
+#     reproducibility gap, so the finding is correct and the severity (WARNING) matches.
+#   * a URL containing `/resolve/main/` that is NOT a model blob (some HF dataset/space asset URLs) --
+#     still a moving ref, so still a true positive for the pinning question, but the remediation
+#     (pin a revision SHA) is the same either way.
+#
+# KNOWN BLIND SPOTS (documented so a zero is never mistaken for proof):
+#   * `pip install "foo>=1.0"` and `foo~=1.0` are RANGE specifiers, not exact pins -- they are the
+#     "not pinned" finding dimension 18 already grades in manifests, but this rule deliberately does
+#     NOT flag them, because a range on a CLI install is far rarer than an exact-or-nothing install and
+#     matching it cleanly in a regex without sweeping up `--flag>=x`-shaped noise was not worth the FP
+#     cost. Stated, not silently dropped.
+#   * a package installed via a variable (`pip install "$PKG"`) is invisible -- the version, if any,
+#     is wherever `$PKG` was set. Same interprocedural limit every lexical rule here has.
+#   * `conda install`, `poetry add`, `npm i -g <pkg>` are not covered this pass; add sinks as real
+#     submissions surface them rather than speculatively.
+rules:
+  - id: sh-unpinned-package-install
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "*.sh"
+        - "*.bash"
+        - "Dockerfile"
+        - "Dockerfile.*"
+        - "*.dockerfile"
+        - "*Dockerfile*"
+    message: >-
+      dim18: this installs a dependency with no pinned version, so it resolves to whatever the index
+      or registry serves at build/run time -- non-reproducible, and able to drift onto a yanked or
+      malicious release with no diff. Pin an exact version (`pip install foo==1.2.3`,
+      `apt-get install foo=1.2.3-1`) or a model revision/commit SHA instead of a branch like
+      `resolve/main`. Dimension 18 rates this higher when the install runs in a PUBLISHED artifact
+      with network access at deploy or run time (a container entrypoint re-resolves on every start);
+      `-r requirements.txt`, `-e .`, and local artifact paths are excluded because the version is
+      declared elsewhere.
+    metadata:
+      qr-dimension: 18
+      cwe: "CWE-1357: Reliance on Insufficiently Trustworthy Component"
+      owasp: "A03:2025 Software Supply Chain Failures"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # pip / pip3 / python -m pip install of a bare package name (no ==, no manifest, no local
+          # artifact). The negative lookaheads are what make it fire ONLY on the unpinned form.
+          - pattern-regex: '(?m)^.*\bpip[0-9]*\s+install\s+(?![^\n]*(==|-r\b|--requirement\b|-e\b|\.whl\b|\.tar\.gz\b|/))[^\n]*$'
+          - pattern-regex: '(?m)^.*\bpython[0-9.]*\s+-m\s+pip\s+install\s+(?![^\n]*(==|-r\b|--requirement\b|-e\b|\.whl\b|\.tar\.gz\b|/))[^\n]*$'
+          # apt / apt-get / apk install of a package with no `=version` pin. `-y`, `--no-install-recommends`
+          # and friends carry no `=`, so a line with a real pin (`foo=1.2.3`) is excluded by the `=`.
+          - pattern-regex: '(?m)^.*\bapt(-get)?\s+install\s+(?![^\n]*=)[^\n]*$'
+          - pattern-regex: '(?m)^.*\bapk\s+add\s+(?![^\n]*=)[^\n]*$'
+          # A model / blob URL that pins to a moving branch ref rather than a revision SHA. A URL
+          # cannot contain whitespace, so `\S` bounds the host+path without the quote-escaping a
+          # character class of quotes would need in YAML. NOT anchored at `$`: a real download line
+          # ends with `-o model.bin` (or `| tar ...`) AFTER the URL, so anchoring to end-of-line
+          # missed the commonest spelling -- measured on the fixture, line 32.
+          - pattern-regex: '(?m)^.*https?://\S*/resolve/(main|master)/\S+'

@@ -7,6 +7,52 @@ All notable changes to this skill are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Three rules closing coverage gaps a benchmark against `dhammon/ai-goat` exposed** — the skill was
+  run against that intentionally-vulnerable LLM webapp to find where the *toolkit* missed a known
+  exposure that only surfaced by hand. Rule count **18 → 21**, suite **213 → 217**. Each is a rule +
+  planted-defect fixture pair, wired into Gate 5 with per-finding mutation rows and value-only negative
+  controls, and each passes `semgrep test`.
+  - **`sh-unpinned-package-install`** (dim 18, CWE-1357, OWASP A03:2025 Software Supply Chain) — an
+    unpinned install *inside a shell script or Dockerfile `RUN`*, which the two existing dim-18 rules
+    cannot see: `pinned-vuln-scan.py` reads dependency manifests and `yaml-unpinned-action-ref` reads
+    workflow `uses:` refs, so a container entrypoint doing `pip3 install requests validators` — which
+    re-resolves on every start — was ungraded. Ships in **generic mode** (shell and Dockerfiles are
+    unparseable by `ruff`/`bandit` and have no semgrep deep analysis for this shape) with five regex
+    branches: `pip`/`pip3`/`python -m pip` with no `==`, `apt`/`apt-get`/`apk` with no `=version`, and a
+    moving model reference (a Hugging Face `resolve/main`|`master` URL — the model-registry equivalent of
+    `@main`). **WARNING, not ERROR, deliberately**, same reasoning as `yaml-unpinned-action-ref`: unpinned
+    installs are the ecosystem default, so ERROR trains reviewers to ignore the finding. `-r
+    requirements.txt`, `-e .`, and local `*.whl`/`*.tar.gz` paths are excluded because the version is
+    declared elsewhere — **each exclusion ablation-tested load-bearing** (drop it and the matching OK line
+    fires). Blind spots stated in the header, not silently dropped: range specifiers (`foo>=1.0`), an
+    install behind a shell variable (`pip install "$PKG"`), backslash-continued lines, and the
+    `conda`/`poetry`/`npm`/`gem` verbs are all uncovered — so a zero is not proof. Worked example: AI
+    Goat's challenge-2 entrypoint and base Dockerfile. `hadolint`'s DL3008/DL3013 cover the Dockerfile
+    forms but it is not in this kit and says nothing about shell scripts or model URLs.
+  - **`py-untrusted-data-in-llm-prompt`** (dim 13, CWE-1427, OWASP A05:2025 Injection) — the Python
+    counterpart to `ts-untrusted-data-in-llm-system-prompt`, which existed only for TypeScript. Untrusted
+    data concatenated or f-string-interpolated into an LLM instruction channel in three SDK vocabularies:
+    the Anthropic `system=` kwarg, an OpenAI `{"role": "system", …}` dict, and a **flat completion call
+    keyed on a `max_tokens=` discriminator** — the AI Goat challenge shape, where scanned text lands in
+    `"Instruction: " + instruction + " Question: " + question + " Answer:"`. The `max_tokens=` key is the
+    load-bearing discriminator that keeps the completion branch off every `print`/`log` concatenation;
+    an all-literal concat is excluded by three `pattern-not`s. ERROR severity. **No large-corpus
+    false-positive rate yet — validated on planted-defect fixtures only** (10 catch / 6 spare), and the
+    header says so; a prompt assembled in a variable and passed by name is invisible to it.
+  - **`py-unchecked-subprocess-result`** (dim 3, CWE-252, OWASP A10:2025 Mishandling of Exceptional
+    Conditions) — the happy-path fail-open that raises *no exception at all*, so `py-failopen-on-exception`
+    structurally cannot see it: a subprocess fails (non-zero exit) and the caller returns success because
+    it never read the exit status. Two shapes: a `subprocess.run(...)` whose `.returncode` is never
+    inspected before `return True`, and a `poll()` loop that breaks on `is not None` (finished ≠ succeeded)
+    and returns True below. Worked example is AI Goat's `runner.run`, whose correct sibling
+    `check_llm_status` in the same file *does* test `returncode` — the tell it is a bug, not house style.
+    The `subprocess.run` exclusions are full-span `pattern-not` (the value check sits *between* the run
+    and the return, not around it) and the `returncode` check uses a deep-expression `if <... $RES.returncode
+    ...>:` form because the reference lives inside an `if` condition, not as a bare statement — both
+    measured, each spares the checked sibling. `check=True` is spared (it raises, handing the case to
+    `py-failopen-on-exception`). `bandit` B603/B607 ask about `shell=True`/untrusted argv, never a
+    discarded exit code. MEDIUM confidence: triage question is whether a downstream decision assumes the
+    process succeeded — a best-effort `touch` that does not care is a triage item, not a defect.
 - **`py-empty-default-decides-exclusion`** (dim 1, CWE-1288, OWASP A04:2025 Insecure Design) — the
   **default-argument** spelling of the empty-relationship bug, which no shipped probe could see:
   `need = TABLE.get(k, set())` followed by a set operation that decides an exclusion, so an absent key
