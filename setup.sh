@@ -20,6 +20,13 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLS="gitleaks ruff bandit shellcheck actionlint semgrep"
 # Everything in TOOLS except bandit is brew-installable; bandit goes via pipx/pip below.
 BREW_TOOLS=$(echo "$TOOLS" | tr ' ' '\n' | grep -v '^bandit$' | tr '\n' ' ')
+# Pin bandit to an exact version, matching CI's `ruff==0.16.1`/`semgrep==1.172.0` -- installing it
+# without a version pin resolves to whatever PyPI serves that day (dimension 18, and this skill's own
+# sh-unpinned-package-install rule flagged the two install lines below). One variable, used by both the
+# pipx and pip3 paths, so they can never drift. (The rule is line-oriented and would match a bare
+# unpinned install spelled out here in prose, so the pinned `bandit==$BANDIT_VERSION` form is used
+# throughout rather than quoting the unpinned command as an example.)
+BANDIT_VERSION="1.9.4"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -88,11 +95,11 @@ else
   echo "    $(echo "$BREW_TOOLS" | sed 's/ *$//; s/ /, /g')" >&2
 fi
 
-# bandit via pipx (isolated) if available, else pip --user
+# bandit via pipx (isolated) if available, else pip --user. Pinned to $BANDIT_VERSION (see above).
 if ! have bandit; then
-  if have pipx; then pipx install bandit || true
-  elif have pip3; then pip3 install --user bandit || true
-  else echo "  Could not install bandit automatically (no pipx/pip3); 'pipx install bandit'." >&2; fi
+  if have pipx; then pipx install "bandit==$BANDIT_VERSION" || true
+  elif have pip3; then pip3 install --user "bandit==$BANDIT_VERSION" || true
+  else echo "  Could not install bandit automatically (no pipx/pip3); 'pipx install bandit==$BANDIT_VERSION'." >&2; fi
 fi
 
 echo ""
